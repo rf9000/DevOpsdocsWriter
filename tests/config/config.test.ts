@@ -1,85 +1,60 @@
-import { describe, expect, it } from "bun:test";
-import { loadConfig } from "../../src/config/index.ts";
+import { describe, test, expect } from 'bun:test';
+import { loadConfig } from '../../src/config/index.ts';
 
-const validEnv: Record<string, string> = {
-  AZURE_DEVOPS_PAT: "test-pat-token",
-  AZURE_DEVOPS_ORG: "my-org",
-  AZURE_DEVOPS_PROJECT: "my-project",
-};
+function baseEnv(overrides: Record<string, string | undefined> = {}) {
+  return {
+    AZURE_DEVOPS_PAT: 'pat',
+    AZURE_DEVOPS_ORG: 'org',
+    AZURE_DEVOPS_PROJECT: 'proj',
+    TARGET_REPO_PATH: 'C:/repos/al',
+    DOCS_REPO_PATH: 'C:/repos/docs',
+    ...overrides,
+  };
+}
 
-describe("loadConfig", () => {
-  it("returns correct AppConfig for valid env", () => {
-    const config = loadConfig(validEnv);
-
-    expect(config.pat).toBe("test-pat-token");
-    expect(config.org).toBe("my-org");
-    expect(config.orgUrl).toBe("https://dev.azure.com/my-org");
-    expect(config.project).toBe("my-project");
+describe('loadConfig', () => {
+  test('loads required values and derives orgUrl', () => {
+    const cfg = loadConfig(baseEnv());
+    expect(cfg.org).toBe('org');
+    expect(cfg.orgUrl).toBe('https://dev.azure.com/org');
+    expect(cfg.project).toBe('proj');
+    expect(cfg.targetRepoPath).toBe('C:/repos/al');
+    expect(cfg.docsRepoPath).toBe('C:/repos/docs');
   });
 
-  it("throws when AZURE_DEVOPS_PAT is missing", () => {
-    const env = { ...validEnv };
-    delete env.AZURE_DEVOPS_PAT;
-    expect(() => loadConfig(env)).toThrow("Invalid configuration");
+  test('applies defaults for optional values', () => {
+    const cfg = loadConfig(baseEnv());
+    expect(cfg.writeDocsTag).toBe('write-docs');
+    expect(cfg.outputDir).toBe('.output');
+    expect(cfg.skillsSourceDir).toBe('.claude/skills');
+    expect(cfg.pollIntervalMinutes).toBe(15);
+    expect(cfg.maxDocsPerDay).toBe(5);
+    expect(cfg.claudeModel).toBe('claude-sonnet-4-6');
+    expect(cfg.dryRun).toBe(false);
   });
 
-  it("throws when AZURE_DEVOPS_ORG is missing", () => {
-    const env = { ...validEnv };
-    delete env.AZURE_DEVOPS_ORG;
-    expect(() => loadConfig(env)).toThrow("Invalid configuration");
+  test('coerces numeric env vars', () => {
+    const cfg = loadConfig(
+      baseEnv({ POLL_INTERVAL_MINUTES: '30', MAX_DOCS_PER_DAY: '2' }),
+    );
+    expect(cfg.pollIntervalMinutes).toBe(30);
+    expect(cfg.maxDocsPerDay).toBe(2);
   });
 
-  it("throws when AZURE_DEVOPS_PROJECT is missing", () => {
-    const env = { ...validEnv };
-    delete env.AZURE_DEVOPS_PROJECT;
-    expect(() => loadConfig(env)).toThrow("Invalid configuration");
-  });
-
-  it("applies default values when optional vars are absent", () => {
-    const config = loadConfig(validEnv);
-
-    expect(config.pollIntervalMinutes).toBe(15);
-    expect(config.claudeModel).toBe("claude-sonnet-4-6");
-    expect(config.promptPath).toBe(".claude/commands/do-process-item.md");
-    expect(config.stateDir).toBe(".state");
-  });
-
-  it("uses default WIQL query when not provided", () => {
-    const config = loadConfig(validEnv);
-    expect(config.wiqlQuery).toContain("SELECT [System.Id] FROM workitems");
-  });
-
-  it("uses custom WIQL query when provided", () => {
-    const env = {
-      ...validEnv,
-      AZURE_DEVOPS_WIQL_QUERY: "SELECT [System.Id] FROM workitems WHERE [System.State] = 'Active'",
-    };
-    const config = loadConfig(env);
-    expect(config.wiqlQuery).toBe(
-      "SELECT [System.Id] FROM workitems WHERE [System.State] = 'Active'",
+  test('throws when a required var is missing', () => {
+    expect(() => loadConfig(baseEnv({ DOCS_REPO_PATH: undefined }))).toThrow(
+      /DOCS_REPO_PATH/,
+    );
+    expect(() => loadConfig(baseEnv({ TARGET_REPO_PATH: undefined }))).toThrow(
+      /TARGET_REPO_PATH/,
     );
   });
 
-  it("overrides defaults when optional vars are provided", () => {
-    const env = {
-      ...validEnv,
-      POLL_INTERVAL_MINUTES: "30",
-      CLAUDE_MODEL: "claude-opus-4-6",
-      PROMPT_PATH: "custom/prompt.md",
-      STATE_DIR: "/tmp/state",
-    };
-
-    const config = loadConfig(env);
-
-    expect(config.pollIntervalMinutes).toBe(30);
-    expect(config.claudeModel).toBe("claude-opus-4-6");
-    expect(config.promptPath).toBe("custom/prompt.md");
-    expect(config.stateDir).toBe("/tmp/state");
-  });
-
-  it("derives orgUrl from org name", () => {
-    const env = { ...validEnv, AZURE_DEVOPS_ORG: "contoso" };
-    const config = loadConfig(env);
-    expect(config.orgUrl).toBe("https://dev.azure.com/contoso");
+  test('honours overrides for the tag and dirs', () => {
+    const cfg = loadConfig(
+      baseEnv({ WRITE_DOCS_TAG: 'doc-it', OUTPUT_DIR: 'out' }),
+    );
+    expect(cfg.writeDocsTag).toBe('doc-it');
+    expect(cfg.outputDir).toBe('out');
   });
 });

@@ -2,6 +2,10 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
 import type { ProcessedState } from '../types/index.ts';
 
+function todayISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 export class StateStore {
   private filePath: string;
   private state: ProcessedState;
@@ -25,13 +29,24 @@ export class StateStore {
           'processedItemIds' in parsed &&
           Array.isArray((parsed as ProcessedState).processedItemIds)
         ) {
-          return parsed as ProcessedState;
+          const p = parsed as Partial<ProcessedState>;
+          return {
+            processedItemIds: p.processedItemIds ?? [],
+            lastRunAt: p.lastRunAt ?? '',
+            dailyDocsCount: p.dailyDocsCount ?? 0,
+            dailyCountDate: p.dailyCountDate ?? '',
+          };
         }
       }
     } catch {
       // file doesn't exist or is corrupted JSON — start fresh
     }
-    return { processedItemIds: [], lastRunAt: '' };
+    return {
+      processedItemIds: [],
+      lastRunAt: '',
+      dailyDocsCount: 0,
+      dailyCountDate: '',
+    };
   }
 
   save(): void {
@@ -51,8 +66,35 @@ export class StateStore {
     }
   }
 
+  canGenerateToday(max: number): boolean {
+    const today = todayISO();
+    if (this.state.dailyCountDate !== today) {
+      this.state.dailyDocsCount = 0;
+      this.state.dailyCountDate = today;
+    }
+    return this.state.dailyDocsCount < max;
+  }
+
+  incrementDailyCount(): void {
+    const today = todayISO();
+    if (this.state.dailyCountDate !== today) {
+      this.state.dailyDocsCount = 0;
+      this.state.dailyCountDate = today;
+    }
+    this.state.dailyDocsCount++;
+  }
+
+  get dailyDocsCount(): number {
+    return this.state.dailyDocsCount;
+  }
+
   reset(): void {
-    this.state = { processedItemIds: [], lastRunAt: '' };
+    this.state = {
+      processedItemIds: [],
+      lastRunAt: '',
+      dailyDocsCount: 0,
+      dailyCountDate: '',
+    };
     this.processedSet = new Set();
     this.save();
   }

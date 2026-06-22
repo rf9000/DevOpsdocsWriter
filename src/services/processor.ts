@@ -1,30 +1,59 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { join, resolve } from 'path';
+
 import type {
   AppConfig,
+  DocsProcessResult,
+  PrContext,
+  PullRequestRef,
+  WorkItemComment,
   WorkItemResponse,
-  ItemProcessResult,
 } from '../types/index.ts';
-import type { GeneratorContext } from './ai-generator.ts';
+import type { DocsContext } from './generator.ts';
+import type { DiscoveredSkill } from './skill-loader.ts';
 
 import * as sdk from '../sdk/azure-devops-client.ts';
-import * as gen from './ai-generator.ts';
+import * as gen from './generator.ts';
+import * as linker from './skill-linker.ts';
+import { discoverSkills } from './skill-loader.ts';
+import { stripHtmlToText } from '../utils/html.ts';
 
 export interface ProcessorDeps {
-  updateWorkItemField: (
+  getWorkItem: (config: AppConfig, id: number) => Promise<WorkItemResponse>;
+  getWorkItemComments: (config: AppConfig, id: number) => Promise<WorkItemComment[]>;
+  parsePullRequestRefs: (workItem: WorkItemResponse) => PullRequestRef[];
+  getPullRequestContext: (config: AppConfig, ref: PullRequestRef) => Promise<PrContext>;
+  discoverSkills: (skillsRoot: string) => DiscoveredSkill[];
+  createSkillJunctions: (targetRepoPath: string, skillsSourceDir: string) => string[];
+  removeSkillJunctions: (created: string[]) => void;
+  generateDocs: (config: AppConfig, context: DocsContext) => Promise<string>;
+  uploadAttachment: (
     config: AppConfig,
-    workItemId: number,
-    fieldName: string,
-    value: string,
-  ) => Promise<WorkItemResponse>;
-
-  generateWithAI: (
+    fileName: string,
+    content: string | Buffer,
+  ) => Promise<{ id: string; url: string }>;
+  linkAttachmentToWorkItem: (
     config: AppConfig,
-    context: GeneratorContext,
-  ) => Promise<string>;
+    id: number,
+    url: string,
+    name: string,
+    comment: string,
+  ) => Promise<unknown>;
+  addWorkItemComment: (config: AppConfig, id: number, html: string) => Promise<unknown>;
 }
 
 const defaultDeps: ProcessorDeps = {
-  updateWorkItemField: sdk.updateWorkItemField,
-  generateWithAI: gen.generateWithAI,
+  getWorkItem: sdk.getWorkItem,
+  getWorkItemComments: sdk.getWorkItemComments,
+  parsePullRequestRefs: sdk.parsePullRequestRefs,
+  getPullRequestContext: sdk.getPullRequestContext,
+  discoverSkills,
+  createSkillJunctions: linker.createSkillJunctions,
+  removeSkillJunctions: linker.removeSkillJunctions,
+  generateDocs: gen.generateDocs,
+  uploadAttachment: sdk.uploadAttachment,
+  linkAttachmentToWorkItem: sdk.linkAttachmentToWorkItem,
+  addWorkItemComment: sdk.addWorkItemComment,
 };
 
 function log(message: string): void {
@@ -32,50 +61,121 @@ function log(message: string): void {
   console.log(`[${ts}] ${message}`);
 }
 
-// TODO: Replace this stub with your project-specific processing logic.
-// This example processes work items found via WIQL query and generates
-// AI-powered summaries. Adapt the field checks, generation context, and
-// update logic to match your use case.
-
-export async function processItem(
+export async function processDocsItem(
   config: AppConfig,
-  item: WorkItemResponse,
+  itemId: number,
   deps: ProcessorDeps = defaultDeps,
-): Promise<ItemProcessResult> {
-  log(`Processing item #${item.id}: ${String(item.fields['System.Title'] ?? '(untitled)')}`);
-
-  const context: GeneratorContext = {
-    itemTitle: String(item.fields['System.Title'] ?? ''),
-    itemType: String(item.fields['System.WorkItemType'] ?? ''),
-    itemDescription: String(item.fields['System.Description'] ?? ''),
-    itemFields: Object.fromEntries(
-      Object.entries(item.fields).filter(
-        ([key]) =>
-          !['System.Title', 'System.WorkItemType', 'System.Description'].includes(key),
-      ),
-    ),
-  };
+): Promise<DocsProcessResult> {
+  log(`Processing work item #${itemId}...`);
 
   try {
-    log(`  Item #${item.id}: Generating AI output...`);
-    const output = await deps.generateWithAI(config, context);
+    const workItem = await deps.getWorkItem(config, itemId);
+    const itemTitle = String(workItem.fields['System.Title'] ?? '');
+    const itemType = String(workItem.fields['System.WorkItemType'] ?? '');
+    const itemDescription = stripHtmlToText(
+      String(workItem.fields['System.Description'] ?? ''),
+    );
+    log(`  #${itemId}: "${itemTitle}" (${itemType})`);
 
-    if (config.dryRun) {
-      log(`  Item #${item.id}: [DRY RUN] Generated:\n    "${output}"`);
-      return { itemId: item.id, processed: true };
+    // Comments
+    const rawComments = await deps.getWorkItemComments(config, itemId);
+    const comments = rawComments
+      .map((c) => stripHtmlToText(String(c.text ?? '')))
+      .filter((c) => c.length > 0);
+    if (comments.length > 0) log(`  #${itemId}: ${comments.length} comment(s)`);
+
+    // Linked pull requests
+    const prRefs = deps.parsePullRequestRefs(workItem);
+    const pullRequests: PrContext[] = [];
+    for (const ref of prRefs) {
+      try {
+        pullRequests.push(await deps.getPullRequestContext(config, ref));
+      } catch (err) {
+        log(`  #${itemId}: Skipping PR #${ref.pullRequestId} — ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (pullRequests.length > 0) log(`  #${itemId}: ${pullRequests.length} linked PR(s)`);
+
+    // Skills (for the prompt listing) + junction them into the source repo
+    const discovered = deps.discoverSkills(resolve(config.skillsSourceDir));
+    if (discovered.length > 0) {
+      log(`  #${itemId}: ${discovered.length} docs skill(s): ${discovered.map((s) => s.name).join(', ')}`);
     }
 
-    // TODO: Replace 'System.Description' with the field you want to update
-    await deps.updateWorkItemField(
+    const outputDir = resolve(config.outputDir);
+    mkdirSync(outputDir, { recursive: true });
+    const fileName = `workitem-${itemId}-docs.md`;
+    const outputPath = join(outputDir, fileName);
+
+    const context: DocsContext = {
+      itemId,
+      itemTitle,
+      itemType,
+      itemDescription,
+      comments,
+      pullRequests,
+      discoveredSkills: discovered,
+      outputPath,
+    };
+
+    let summary: string;
+    const created = deps.createSkillJunctions(config.targetRepoPath, config.skillsSourceDir);
+    log(`  #${itemId}: Linked ${created.length} skill junction(s) into source repo`);
+    try {
+      log(`  #${itemId}: Generating documentation article...`);
+      summary = await deps.generateDocs(config, context);
+    } finally {
+      deps.removeSkillJunctions(created);
+      log(`  #${itemId}: Removed skill junction(s)`);
+    }
+
+    if (!existsSync(outputPath)) {
+      return {
+        itemId,
+        documented: false,
+        error: `Agent did not produce an article at ${outputPath}`,
+      };
+    }
+
+    if (config.dryRun) {
+      const summaryPath = join(outputDir, `workitem-${itemId}-summary.md`);
+      writeFileSync(summaryPath, summary.endsWith('\n') ? summary : `${summary}\n`);
+      log(`  #${itemId}: [DRY RUN] Article  → ${outputPath}`);
+      log(`  #${itemId}: [DRY RUN] Summary  → ${summaryPath}`);
+      log(`  #${itemId}: [DRY RUN] Skipping ADO writes`);
+      return { itemId, documented: true, articlePath: outputPath, summaryPath };
+    }
+
+    // Attach the article, then comment.
+    const content = readFileSync(outputPath, 'utf-8');
+    const attachmentName = fileName;
+    const uploaded = await deps.uploadAttachment(config, attachmentName, content);
+    await deps.linkAttachmentToWorkItem(
       config,
-      item.id,
-      'System.Description',
-      output,
+      itemId,
+      uploaded.url,
+      attachmentName,
+      'Generated documentation article',
     );
-    log(`  Item #${item.id}: Output written`);
-    return { itemId: item.id, processed: true };
+    log(`  #${itemId}: Attached ${attachmentName}`);
+
+    const comment =
+      `📄 <b>Documentation article generated and attached:</b> ${attachmentName}<br><br>` +
+      `${escapeHtml(summary).replace(/\n/g, '<br>')}`;
+    await deps.addWorkItemComment(config, itemId, comment);
+    log(`  #${itemId}: Posted confirmation comment`);
+
+    return { itemId, documented: true, articlePath: outputPath };
   } catch (err) {
-    log(`  Item #${item.id}: Error — ${err}`);
-    return { itemId: item.id, processed: false, error: String(err) };
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    log(`  #${itemId}: Error — ${errorMsg}`);
+    return { itemId, documented: false, error: errorMsg };
   }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }

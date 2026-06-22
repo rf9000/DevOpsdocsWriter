@@ -1,32 +1,22 @@
-import type {
-  AppConfig,
-  WorkItemResponse,
-  ItemProcessResult,
-} from '../types/index.ts';
+import type { AppConfig, DocsProcessResult } from '../types/index.ts';
 import { StateStore } from '../state/state-store.ts';
 import * as sdk from '../sdk/azure-devops-client.ts';
 import * as proc from './processor.ts';
 
 export interface WatcherDeps {
-  fetchItems: (
+  queryTaggedWorkItems: (config: AppConfig, tag: string) => Promise<number[]>;
+  processDocsItem: (config: AppConfig, itemId: number) => Promise<DocsProcessResult>;
+  removeTagFromWorkItem: (
     config: AppConfig,
-  ) => Promise<WorkItemResponse[]>;
-
-  processItem: (
-    config: AppConfig,
-    item: WorkItemResponse,
-  ) => Promise<ItemProcessResult>;
-}
-
-async function defaultFetchItems(config: AppConfig): Promise<WorkItemResponse[]> {
-  const ids = await sdk.queryWorkItems(config, config.wiqlQuery);
-  if (ids.length === 0) return [];
-  return sdk.getWorkItemsBatch(config, ids);
+    workItemId: number,
+    tag: string,
+  ) => Promise<void>;
 }
 
 const defaultDeps: WatcherDeps = {
-  fetchItems: defaultFetchItems,
-  processItem: proc.processItem,
+  queryTaggedWorkItems: sdk.queryTaggedWorkItems,
+  processDocsItem: proc.processDocsItem,
+  removeTagFromWorkItem: sdk.removeTagFromWorkItem,
 };
 
 function log(message: string): void {
@@ -38,39 +28,54 @@ export async function runPollCycle(
   config: AppConfig,
   stateStore: StateStore,
   deps: WatcherDeps = defaultDeps,
-): Promise<{ processed: number; errors: number }> {
-  let totalProcessed = 0;
-  let totalErrors = 0;
+): Promise<{ documented: number; skipped: number; errors: number }> {
+  log(`Polling for work items tagged "${config.writeDocsTag}"...`);
+  const itemIds = await deps.queryTaggedWorkItems(config, config.writeDocsTag);
+  log(`Found ${itemIds.length} tagged work item(s)`);
 
-  log('Polling for items...');
+  let documented = 0;
+  let skipped = 0;
+  let errors = 0;
 
-  const items = await deps.fetchItems(config);
-  const newItems = items.filter(item => !stateStore.isProcessed(item.id));
+  for (const itemId of itemIds) {
+    if (!stateStore.canGenerateToday(config.maxDocsPerDay)) {
+      log(`Daily limit reached (${config.maxDocsPerDay}). Skipping remaining items.`);
+      skipped += itemIds.length - (documented + errors);
+      break;
+    }
 
-  log(`  Found ${items.length} items, ${newItems.length} unprocessed`);
-
-  for (const item of newItems) {
     try {
-      const result = await deps.processItem(config, item);
+      const result = await deps.processDocsItem(config, itemId);
+      if (result.documented) {
+        stateStore.markProcessed(itemId);
+        stateStore.incrementDailyCount();
+        documented++;
 
-      if (result.processed) {
-        stateStore.markProcessed(item.id);
-        totalProcessed++;
+        // Remove the tag so the item is not picked up again (skipped in dry-run).
+        if (!config.dryRun) {
+          try {
+            await deps.removeTagFromWorkItem(config, itemId, config.writeDocsTag);
+            log(`#${itemId}: Removed "${config.writeDocsTag}" tag`);
+          } catch (tagErr) {
+            log(`#${itemId}: Warning — failed to remove tag: ${tagErr}`);
+          }
+        }
       } else {
-        totalErrors++;
+        log(`#${itemId}: Documentation failed — ${result.error ?? 'unknown reason'}`);
+        errors++;
       }
     } catch (err) {
-      log(`  Item #${item.id}: Fatal error — ${err}`);
-      totalErrors++;
+      log(`#${itemId}: Fatal error — ${err}`);
+      errors++;
     }
   }
 
   stateStore.save();
-  return { processed: totalProcessed, errors: totalErrors };
+  return { documented, skipped, errors };
 }
 
 function sleep(ms: number, signal: { aborted: boolean }): Promise<void> {
-  return new Promise(resolve => {
+  return new Promise((resolve) => {
     const checkInterval = 1000;
     let elapsed = 0;
     const timer = setInterval(() => {
@@ -94,13 +99,15 @@ export async function startWatcher(config: AppConfig): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  log(`Starting watcher — polling every ${config.pollIntervalMinutes} minutes`);
-  log(`${stateStore.processedCount} items already processed`);
+  log(`Starting docsWriter — polling every ${config.pollIntervalMinutes} minutes`);
+  log(`Watching tag: "${config.writeDocsTag}"`);
+  log(`Source repo: ${config.targetRepoPath}`);
+  log(`Max ${config.maxDocsPerDay} articles per day`);
 
   while (!signal.aborted) {
     try {
       const result = await runPollCycle(config, stateStore);
-      log(`Cycle complete: ${result.processed} processed, ${result.errors} errors`);
+      log(`Cycle complete: ${result.documented} documented, ${result.skipped} skipped, ${result.errors} errors`);
     } catch (err) {
       log(`Cycle failed: ${err}`);
     }

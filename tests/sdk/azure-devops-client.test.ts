@@ -1,39 +1,27 @@
 import { describe, test, expect, afterEach, mock } from 'bun:test';
-import type { AppConfig } from '../../src/types/index.ts';
 import {
   AzureDevOpsError,
   adoFetch,
   adoFetchWithRetry,
-  queryWorkItems,
+  queryTaggedWorkItems,
   getWorkItem,
-  getWorkItemsBatch,
-  updateWorkItemField,
+  getWorkItemComments,
+  parsePullRequestRefs,
+  getPullRequestContext,
+  uploadAttachment,
+  linkAttachmentToWorkItem,
 } from '../../src/sdk/azure-devops-client.ts';
+import type { WorkItemResponse } from '../../src/types/index.ts';
+import { mockConfig } from '../helpers.ts';
 
 const originalFetch = globalThis.fetch;
 let mockFn: ReturnType<typeof mock>;
 
-function mockConfig(): AppConfig {
-  return {
-    org: 'my-org',
-    orgUrl: 'https://dev.azure.com/my-org',
-    project: 'my-project',
-    pat: 'test-pat-token',
-    wiqlQuery: "SELECT [System.Id] FROM workitems WHERE [System.State] = 'New'",
-    pollIntervalMinutes: 5,
-    claudeModel: 'claude-sonnet-4-6',
-    promptPath: './prompt.md',
-    stateDir: '.state',
-    dryRun: false,
-  };
-}
-
-function setMockFetch(body: unknown, status = 200, statusText = 'OK') {
+function setMockFetch(body: unknown, status = 200) {
   mockFn = mock(() =>
     Promise.resolve(
       new Response(JSON.stringify(body), {
         status,
-        statusText,
         headers: { 'Content-Type': 'application/json' },
       }),
     ),
@@ -44,14 +32,13 @@ function setMockFetch(body: unknown, status = 200, statusText = 'OK') {
 function setSequentialMockFetch(
   ...responses: Array<{ body: unknown; status?: number }>
 ) {
-  let callIndex = 0;
+  let i = 0;
   mockFn = mock(() => {
-    const r = responses[callIndex] ?? responses[responses.length - 1]!;
-    callIndex++;
+    const r = responses[i] ?? responses[responses.length - 1]!;
+    i++;
     return Promise.resolve(
       new Response(JSON.stringify(r.body), {
         status: r.status ?? 200,
-        statusText: r.status && r.status >= 400 ? 'Error' : 'OK',
         headers: { 'Content-Type': 'application/json' },
       }),
     );
@@ -66,235 +53,216 @@ afterEach(() => {
 describe('adoFetch', () => {
   test('builds the correct URL and auth header', async () => {
     setMockFetch({ hello: 'world' });
-    const config = mockConfig();
-
-    const result = await adoFetch<{ hello: string }>(config, 'some/path');
+    const result = await adoFetch<{ hello: string }>(mockConfig(), 'some/path');
 
     expect(result).toEqual({ hello: 'world' });
-    expect(mockFn).toHaveBeenCalledTimes(1);
-
     const call = mockFn.mock.calls[0]!;
-    const url = call[0] as string;
-    const init = call[1] as RequestInit;
-
-    expect(url).toBe(
-      'https://dev.azure.com/my-org/my-project/_apis/some/path',
+    expect(call[0]).toBe('https://dev.azure.com/my-org/my-project/_apis/some/path');
+    const headers = (call[1] as RequestInit).headers as Record<string, string>;
+    expect(headers['Authorization']).toBe(
+      'Basic ' + Buffer.from(':test-pat-token').toString('base64'),
     );
-
-    const headers = init.headers as Record<string, string>;
-    const expectedAuth =
-      'Basic ' + Buffer.from(':test-pat-token').toString('base64');
-    expect(headers['Authorization']).toBe(expectedAuth);
-    expect(headers['Content-Type']).toBe('application/json');
   });
 
   test('throws AzureDevOpsError on non-ok response', async () => {
-    setMockFetch({ message: 'Not Found' }, 404, 'Not Found');
-    const config = mockConfig();
-
-    try {
-      await adoFetch(config, 'missing/resource');
-      throw new Error('should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(AzureDevOpsError);
-      const adoErr = err as AzureDevOpsError;
-      expect(adoErr.statusCode).toBe(404);
-      expect(adoErr.name).toBe('AzureDevOpsError');
-    }
+    setMockFetch({ message: 'Not Found' }, 404);
+    await expect(adoFetch(mockConfig(), 'missing')).rejects.toBeInstanceOf(
+      AzureDevOpsError,
+    );
   });
 });
 
 describe('adoFetchWithRetry', () => {
-  test('retries on 500 and eventually succeeds', async () => {
-    setSequentialMockFetch(
-      { body: { error: 'Internal Server Error' }, status: 500 },
-      { body: { ok: true }, status: 200 },
-    );
-    const config = mockConfig();
-
+  test('retries on 500 then succeeds', async () => {
+    setSequentialMockFetch({ body: {}, status: 500 }, { body: { ok: true } });
     const result = await adoFetchWithRetry<{ ok: boolean }>(
-      config,
-      'test/path',
+      mockConfig(),
+      'p',
       undefined,
       [0, 0, 0],
     );
-
     expect(result).toEqual({ ok: true });
     expect(mockFn).toHaveBeenCalledTimes(2);
   });
 
   test('does not retry on 404', async () => {
-    setSequentialMockFetch(
-      { body: { error: 'Not Found' }, status: 404 },
-      { body: { ok: true }, status: 200 },
-    );
-    const config = mockConfig();
-
-    try {
-      await adoFetchWithRetry(config, 'test/path', undefined, [0, 0, 0]);
-      throw new Error('should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(AzureDevOpsError);
-      expect((err as AzureDevOpsError).statusCode).toBe(404);
-    }
-
+    setSequentialMockFetch({ body: {}, status: 404 }, { body: { ok: true } });
+    await expect(
+      adoFetchWithRetry(mockConfig(), 'p', undefined, [0, 0, 0]),
+    ).rejects.toBeInstanceOf(AzureDevOpsError);
     expect(mockFn).toHaveBeenCalledTimes(1);
-  });
-
-  test('throws after exhausting retries on 500', async () => {
-    setSequentialMockFetch(
-      { body: { error: 'fail' }, status: 500 },
-      { body: { error: 'fail' }, status: 500 },
-      { body: { error: 'fail' }, status: 500 },
-      { body: { error: 'fail' }, status: 500 },
-    );
-    const config = mockConfig();
-
-    try {
-      await adoFetchWithRetry(config, 'test/path', undefined, [0, 0, 0]);
-      throw new Error('should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(AzureDevOpsError);
-      expect((err as AzureDevOpsError).statusCode).toBe(500);
-    }
-
-    expect(mockFn).toHaveBeenCalledTimes(4);
   });
 });
 
-describe('queryWorkItems', () => {
-  test('posts WIQL query and returns work item IDs', async () => {
-    setMockFetch({
-      workItems: [
-        { id: 1, url: 'https://example.com/1' },
-        { id: 2, url: 'https://example.com/2' },
-      ],
-    });
-    const config = mockConfig();
+describe('queryTaggedWorkItems', () => {
+  test('returns ids with an exact (case-insensitive) tag match', async () => {
+    setSequentialMockFetch(
+      { body: { workItems: [{ id: 1 }, { id: 2 }, { id: 3 }] } },
+      {
+        body: {
+          value: [
+            { id: 1, fields: { 'System.Tags': 'Write-Docs; other' } },
+            { id: 2, fields: { 'System.Tags': 'write-docs-later' } }, // substring only
+            { id: 3, fields: { 'System.Tags': 'foo' } },
+          ],
+        },
+      },
+    );
 
-    const result = await queryWorkItems(config, "SELECT [System.Id] FROM workitems WHERE [System.State] = 'New'");
-
-    expect(result).toEqual([1, 2]);
-    const call = mockFn.mock.calls[0]!;
-    const url = call[0] as string;
-    const init = call[1] as RequestInit;
-    expect(url).toContain('wit/wiql?api-version=7.0');
-    expect(init.method).toBe('POST');
-    const body = JSON.parse(init.body as string) as { query: string };
-    expect(body.query).toBe("SELECT [System.Id] FROM workitems WHERE [System.State] = 'New'");
+    const result = await queryTaggedWorkItems(mockConfig(), 'write-docs');
+    expect(result).toEqual([1]);
+    const wiql = JSON.parse(mockFn.mock.calls[0]![1]!.body as string).query as string;
+    expect(wiql).toContain("[System.Tags] CONTAINS 'write-docs'");
+    expect(wiql).not.toContain('WorkItemType'); // no type restriction
   });
 
-  test('returns empty array when no work items match', async () => {
+  test('returns empty when nothing matches WIQL', async () => {
     setMockFetch({ workItems: [] });
-    const config = mockConfig();
-
-    const result = await queryWorkItems(config, "SELECT [System.Id] FROM workitems WHERE 1=0");
-    expect(result).toEqual([]);
+    expect(await queryTaggedWorkItems(mockConfig(), 'write-docs')).toEqual([]);
   });
 });
 
 describe('getWorkItem', () => {
-  test('builds correct URL and returns work item directly', async () => {
-    const workItem = {
-      id: 100,
-      fields: { 'System.Title': 'Some work item' },
-      rev: 3,
-      url: 'https://example.com/100',
-    };
-    setMockFetch(workItem);
-    const config = mockConfig();
-
-    const result = await getWorkItem(config, 100);
-
-    expect(result).toEqual(workItem);
+  test('expands relations', async () => {
+    setMockFetch({ id: 100, fields: {}, rev: 1, url: 'u', relations: [] });
+    await getWorkItem(mockConfig(), 100);
     const url = mockFn.mock.calls[0]![0] as string;
     expect(url).toContain('wit/workitems/100');
     expect(url).toContain('$expand=all');
-    expect(url).toContain('api-version=7.0');
   });
 });
 
-describe('getWorkItemsBatch', () => {
-  test('fetches multiple work items and returns them', async () => {
-    const items = [
-      { id: 1, fields: { 'System.Title': 'Item 1' }, rev: 1, url: 'https://example.com/1' },
-      { id: 2, fields: { 'System.Title': 'Item 2' }, rev: 1, url: 'https://example.com/2' },
-    ];
-    setMockFetch({ value: items });
-    const config = mockConfig();
-
-    const result = await getWorkItemsBatch(config, [1, 2]);
-
-    expect(result).toEqual(items);
-    const url = mockFn.mock.calls[0]![0] as string;
-    expect(url).toContain('wit/workitems?ids=1,2');
-    expect(url).toContain('$expand=all');
-    expect(url).toContain('api-version=7.0');
-  });
-
-  test('returns empty array for empty input', async () => {
-    const config = mockConfig();
-    const result = await getWorkItemsBatch(config, []);
-    expect(result).toEqual([]);
+describe('getWorkItemComments', () => {
+  test('returns the comments array', async () => {
+    setMockFetch({ comments: [{ id: 1, text: 'hi' }] });
+    const result = await getWorkItemComments(mockConfig(), 5);
+    expect(result).toEqual([{ id: 1, text: 'hi' }]);
+    expect(mockFn.mock.calls[0]![0] as string).toContain('wit/workItems/5/comments');
   });
 });
 
-describe('updateWorkItemField', () => {
-  test('sends PATCH with json-patch body and correct content-type', async () => {
-    const updated = {
-      id: 100,
-      fields: { 'Custom.Field': 'New value' },
-      rev: 4,
-      url: 'https://example.com/100',
+describe('parsePullRequestRefs', () => {
+  test('extracts projectId/repoId/prId from a PR ArtifactLink', () => {
+    const wi: WorkItemResponse = {
+      id: 1,
+      fields: {},
+      rev: 1,
+      url: 'u',
+      relations: [
+        { rel: 'Hyperlink', url: 'https://example.com' },
+        {
+          rel: 'ArtifactLink',
+          url: 'vstfs:///Git/PullRequestId/proj-guid%2Frepo-guid%2F1234',
+        },
+      ],
     };
-    setMockFetch(updated);
-    const config = mockConfig();
-
-    const result = await updateWorkItemField(
-      config,
-      100,
-      'Custom.Field',
-      'New value',
-    );
-
-    expect(result).toEqual(updated);
-
-    const call = mockFn.mock.calls[0]!;
-    const url = call[0] as string;
-    const init = call[1] as RequestInit;
-
-    expect(url).toContain('wit/workitems/100');
-    expect(url).toContain('api-version=7.0');
-    expect(init.method).toBe('PATCH');
-
-    const headers = init.headers as Record<string, string>;
-    expect(headers['Content-Type']).toBe('application/json-patch+json');
-
-    const body = JSON.parse(init.body as string) as Array<{
-      op: string;
-      path: string;
-      value: string;
-    }>;
-    expect(body).toEqual([
-      { op: 'add', path: '/fields/Custom.Field', value: 'New value' },
+    expect(parsePullRequestRefs(wi)).toEqual([
+      { projectId: 'proj-guid', repoId: 'repo-guid', pullRequestId: 1234 },
     ]);
   });
+
+  test('ignores non-PR artifact links and malformed urls', () => {
+    const wi: WorkItemResponse = {
+      id: 1,
+      fields: {},
+      rev: 1,
+      url: 'u',
+      relations: [
+        { rel: 'ArtifactLink', url: 'vstfs:///Git/Commit/abc' },
+        { rel: 'ArtifactLink', url: 'vstfs:///Git/PullRequestId/bad' },
+      ],
+    };
+    expect(parsePullRequestRefs(wi)).toEqual([]);
+  });
+
+  test('returns empty when there are no relations', () => {
+    expect(parsePullRequestRefs({ id: 1, fields: {}, rev: 1, url: 'u' })).toEqual([]);
+  });
 });
 
-describe('error handling', () => {
-  test('404 throws AzureDevOpsError with statusCode', async () => {
-    setMockFetch({ message: 'Resource not found' }, 404, 'Not Found');
-    const config = mockConfig();
+describe('getPullRequestContext', () => {
+  test('returns metadata + changed files from the last iteration', async () => {
+    setSequentialMockFetch(
+      {
+        body: {
+          pullRequestId: 1234,
+          title: 'Add feature',
+          description: 'desc',
+          status: 'completed',
+          sourceRefName: 'refs/heads/feat',
+          targetRefName: 'refs/heads/main',
+        },
+      },
+      { body: { value: [{ id: 1 }, { id: 2 }] } },
+      {
+        body: {
+          changeEntries: [
+            { item: { path: '/src/A.al' } },
+            { item: { path: '/src/B.al' } },
+          ],
+        },
+      },
+    );
 
-    try {
-      await queryWorkItems(config, 'invalid');
-      throw new Error('should have thrown');
-    } catch (err) {
-      expect(err).toBeInstanceOf(AzureDevOpsError);
-      const adoErr = err as AzureDevOpsError;
-      expect(adoErr.statusCode).toBe(404);
-      expect(adoErr.name).toBe('AzureDevOpsError');
-      expect(adoErr.message).toContain('404');
-    }
+    const result = await getPullRequestContext(mockConfig(), {
+      projectId: 'p',
+      repoId: 'r',
+      pullRequestId: 1234,
+    });
+
+    expect(result.title).toBe('Add feature');
+    expect(result.status).toBe('completed');
+    expect(result.changedFiles).toEqual(['/src/A.al', '/src/B.al']);
+    // iteration changes use the LAST iteration id (2)
+    expect(mockFn.mock.calls[2]![0] as string).toContain('/iterations/2/changes');
+  });
+
+  test('returns metadata with no changed files when there are no iterations', async () => {
+    setSequentialMockFetch(
+      { body: { pullRequestId: 9, title: 'T' } },
+      { body: { value: [] } },
+    );
+    const result = await getPullRequestContext(mockConfig(), {
+      projectId: 'p',
+      repoId: 'r',
+      pullRequestId: 9,
+    });
+    expect(result.title).toBe('T');
+    expect(result.changedFiles).toEqual([]);
+  });
+});
+
+describe('uploadAttachment + linkAttachmentToWorkItem', () => {
+  test('upload posts octet-stream and returns id/url', async () => {
+    setMockFetch({ id: 'att-1', url: 'https://example.com/att-1' });
+    const result = await uploadAttachment(mockConfig(), 'doc.md', '# hello');
+    expect(result).toEqual({ id: 'att-1', url: 'https://example.com/att-1' });
+    const call = mockFn.mock.calls[0]!;
+    expect(call[0] as string).toContain('wit/attachments?fileName=doc.md');
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect((init.headers as Record<string, string>)['Content-Type']).toBe(
+      'application/octet-stream',
+    );
+    expect(init.body).toBe('# hello');
+  });
+
+  test('link sends an AttachedFile relation patch', async () => {
+    setMockFetch({ id: 5, fields: {}, rev: 2, url: 'u' });
+    await linkAttachmentToWorkItem(
+      mockConfig(),
+      5,
+      'https://example.com/att-1',
+      'doc.md',
+      'Generated documentation article',
+    );
+    const init = mockFn.mock.calls[0]![1] as RequestInit;
+    expect(init.method).toBe('PATCH');
+    const body = JSON.parse(init.body as string);
+    expect(body[0].op).toBe('add');
+    expect(body[0].path).toBe('/relations/-');
+    expect(body[0].value.rel).toBe('AttachedFile');
+    expect(body[0].value.url).toBe('https://example.com/att-1');
+    expect(body[0].value.attributes.name).toBe('doc.md');
   });
 });

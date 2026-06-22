@@ -3,34 +3,36 @@
 import { loadConfig } from '../config/index.ts';
 import { startWatcher, runPollCycle } from '../services/watcher.ts';
 import { StateStore } from '../state/state-store.ts';
-import { getWorkItem } from '../sdk/azure-devops-client.ts';
-import { processItem } from '../services/processor.ts';
+import { queryTaggedWorkItems } from '../sdk/azure-devops-client.ts';
+import { processDocsItem } from '../services/processor.ts';
 
 const HELP = `
-DevOps Pull Template
+docsWriter — auto-generate Azure DevOps documentation articles from tagged work items
 
 Usage:
-  devops-pull <command>
+  docswriter <command>
 
 Commands:
   watch            Start the long-running watcher (polls every N minutes)
   run-once         Run a single poll cycle and exit
-  test-item <id>   Process a single work item (dry-run, no writes)
-  reset-state      Clear the processed item state and exit
+  test-item <id>   Generate docs for a single work item (dry-run, no ADO writes)
+  debug-tags       List work items currently carrying the write-docs tag
+  reset-state      Clear the processed-item state and exit
   help             Show this help message
 
 Options:
-  --dry-run        Read-only mode: generate but skip Azure DevOps writes
+  --dry-run        Read-only mode: generate the article + skip Azure DevOps writes and tag removal
 
-Environment variables:
-  AZURE_DEVOPS_PAT          Azure DevOps personal access token (required)
-  AZURE_DEVOPS_ORG          Azure DevOps organization name (required)
-  AZURE_DEVOPS_PROJECT      Azure DevOps project name (required)
-  AZURE_DEVOPS_WIQL_QUERY   WIQL query to find items (optional, has default)
-  POLL_INTERVAL_MINUTES     Polling interval (default: 15)
-  CLAUDE_MODEL              Claude model to use (default: claude-sonnet-4-6)
-  PROMPT_PATH               Path to prompt file (default: .claude/commands/do-process-item.md)
-  STATE_DIR                 State directory (default: .state)
+Environment variables (see .env.example):
+  AZURE_DEVOPS_PAT/ORG/PROJECT   Azure DevOps connection (required)
+  TARGET_REPO_PATH               AL source repo the agent searches (required)
+  DOCS_REPO_PATH                 continia.docs.articles repo (required)
+  WRITE_DOCS_TAG                 Tag that triggers documentation (default: write-docs)
+  OUTPUT_DIR                     Where the article is written (default: .output)
+  SKILLS_SOURCE_DIR              docsWriter's skills (default: .claude/skills)
+  POLL_INTERVAL_MINUTES          Polling interval (default: 15)
+  MAX_DOCS_PER_DAY               Daily cap (default: 5)
+  CLAUDE_MODEL                   Claude model (default: claude-sonnet-4-6)
 `.trim();
 
 const command = process.argv[2];
@@ -51,23 +53,35 @@ switch (command) {
     if (dryRun) console.log('[DRY RUN] No writes will be made to Azure DevOps\n');
     const stateStore = new StateStore(config.stateDir);
     const result = await runPollCycle(config, stateStore);
-    console.log(`Done: ${result.processed} processed, ${result.errors} errors`);
+    console.log(`Done: ${result.documented} documented, ${result.skipped} skipped, ${result.errors} errors`);
     break;
   }
 
   case 'test-item': {
     const itemIdArg = process.argv[3];
     if (!itemIdArg || isNaN(Number(itemIdArg))) {
-      console.error('Usage: devops-pull test-item <work-item-id>');
+      console.error('Usage: docswriter test-item <work-item-id>');
       process.exitCode = 1;
       break;
     }
     const config = loadConfig();
     config.dryRun = true;
-    console.log(`[DRY RUN] Testing processing for work item #${itemIdArg}\n`);
-    const item = await getWorkItem(config, Number(itemIdArg));
-    const result = await processItem(config, item);
-    console.log(`\nDone: ${result.processed ? 'processed' : 'failed'}${result.error ? ` (${result.error})` : ''}`);
+    console.log(`[DRY RUN] Generating docs for work item #${itemIdArg}\n`);
+    const result = await processDocsItem(config, Number(itemIdArg));
+    if (result.documented) {
+      console.log(`\nDone:`);
+      console.log(`  Article: ${result.articlePath}`);
+      if (result.summaryPath) console.log(`  Summary: ${result.summaryPath}`);
+    } else {
+      console.log(`\nDone: failed${result.error ? ` (${result.error})` : ''}`);
+    }
+    break;
+  }
+
+  case 'debug-tags': {
+    const config = loadConfig();
+    const ids = await queryTaggedWorkItems(config, config.writeDocsTag);
+    console.log(`Work items tagged "${config.writeDocsTag}": ${ids.length === 0 ? '(none)' : ids.join(', ')}`);
     break;
   }
 
