@@ -246,7 +246,7 @@ export function buildSystemPrompt(
       `- When the skill needs the unique \`CB-###\` article id, AUTO-SELECT the next unused id by scanning the docs repository for the highest existing \`CB-\` number and incrementing it. Do not prompt.\n` +
       `- Write the FINAL, validated article to EXACTLY this absolute path: \`${context.outputPath}\`.\n` +
       `- Do NOT create or leave any file inside the docs repository — it is read-only context. All writes must go to the output path above.\n` +
-      `- Your final message is posted verbatim (rendered as HTML) as a comment on the work item, so keep it SHORT and reader-facing: one line with the \`docs-validator\` verdict (e.g. "Validator: PASS") followed by a 1–2 sentence summary of what the article covers. Do NOT paste the full validator report, TOC suggestions, or internal notes.`,
+      `- End your final message with the \`docs-validator\` verdict and a one-line summary of what the article covers.`,
   );
 
   return sections.join('\n\n');
