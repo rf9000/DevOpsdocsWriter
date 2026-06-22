@@ -82,6 +82,18 @@ export interface DocsContext {
   outputPath: string;
 }
 
+/**
+ * Append the captured Claude Code process stderr to an error message so an
+ * otherwise-opaque "process exited with code 1" carries the real cause. The
+ * tail is kept (where fatal errors land) and capped to avoid flooding logs.
+ */
+function withStderr(message: string, stderrChunks: string[], maxChars = 4000): string {
+  const stderr = stderrChunks.join('').trim();
+  if (!stderr) return message;
+  const tail = stderr.length > maxChars ? `…(truncated)…\n${stderr.slice(-maxChars)}` : stderr;
+  return `${message}\n  Claude Code process stderr:\n${tail}`;
+}
+
 function extractAssistantText(message: { message: { content: unknown[] } }): string {
   return message.message.content
     .filter((b): b is { type: 'text'; text: string } => (b as { type: string }).type === 'text')
@@ -112,65 +124,81 @@ export async function generateDocs(
   const assistantTexts: string[] = [];
   const toolUses = new Map<string, number>();
   let turnCount = 0;
+  // The SDK pipes the underlying Claude Code process's stderr only when a
+  // `stderr` callback is provided — otherwise it is discarded and any startup
+  // failure surfaces as an opaque "process exited with code 1". Capture it so
+  // the real error (auth, config, missing binary, …) is preserved.
+  const stderrChunks: string[] = [];
 
-  for await (const message of query({
-    prompt: buildUserPrompt(context),
-    options: {
-      model: config.claudeModel,
-      maxTurns: 60,
-      tools: ['Read', 'Grep', 'Glob', 'Bash', 'Skill', 'LSP', 'Write', 'Edit'],
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      canUseTool,
-      systemPrompt: {
-        type: 'preset',
-        preset: 'claude_code',
-        append: systemPrompt,
+  try {
+    for await (const message of query({
+      prompt: buildUserPrompt(context),
+      options: {
+        model: config.claudeModel,
+        maxTurns: 60,
+        tools: ['Read', 'Grep', 'Glob', 'Bash', 'Skill', 'LSP', 'Write', 'Edit'],
+        permissionMode: 'bypassPermissions',
+        allowDangerouslySkipPermissions: true,
+        canUseTool,
+        systemPrompt: {
+          type: 'preset',
+          preset: 'claude_code',
+          append: systemPrompt,
+        },
+        settingSources: ['project'],
+        cwd: config.targetRepoPath,
+        stderr: (data: string) => {
+          stderrChunks.push(data);
+        },
       },
-      settingSources: ['project'],
-      cwd: config.targetRepoPath,
-    },
-  })) {
-    if (message.type === 'assistant') {
-      turnCount++;
-      const text = extractAssistantText(message);
-      if (text.trim()) {
-        assistantTexts.push(text);
+    })) {
+      if (message.type === 'assistant') {
+        turnCount++;
+        const text = extractAssistantText(message);
+        if (text.trim()) {
+          assistantTexts.push(text);
+        }
+        for (const block of message.message.content) {
+          if ((block as { type: string }).type === 'tool_use') {
+            const name = (block as { name: string }).name;
+            toolUses.set(name, (toolUses.get(name) ?? 0) + 1);
+          }
+        }
       }
-      for (const block of message.message.content) {
-        if ((block as { type: string }).type === 'tool_use') {
-          const name = (block as { name: string }).name;
-          toolUses.set(name, (toolUses.get(name) ?? 0) + 1);
+      if (message.type === 'result') {
+        const models = Object.keys(message.modelUsage).join(', ') || 'unknown';
+        const tools =
+          [...toolUses.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .map(([name, count]) => `${name}×${count}`)
+            .join(', ') || 'none';
+        console.log(
+          `  Cost: $${message.total_cost_usd.toFixed(4)} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${message.num_turns} turns | ${models}`,
+        );
+        console.log(`  Tools: ${tools}`);
+        resultSubtype = message.subtype;
+        if (message.subtype === 'success') {
+          result = message.result;
+        } else if (message.subtype === 'error_max_turns') {
+          console.error(`  Agent hit max turns (${turnCount}).`);
+        } else {
+          console.error(`  Agent ended with result subtype: ${message.subtype}`);
         }
       }
     }
-    if (message.type === 'result') {
-      const models = Object.keys(message.modelUsage).join(', ') || 'unknown';
-      const tools =
-        [...toolUses.entries()]
-          .sort((a, b) => b[1] - a[1])
-          .map(([name, count]) => `${name}×${count}`)
-          .join(', ') || 'none';
-      console.log(
-        `  Cost: $${message.total_cost_usd.toFixed(4)} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${message.num_turns} turns | ${models}`,
-      );
-      console.log(`  Tools: ${tools}`);
-      resultSubtype = message.subtype;
-      if (message.subtype === 'success') {
-        result = message.result;
-      } else if (message.subtype === 'error_max_turns') {
-        console.error(`  Agent hit max turns (${turnCount}).`);
-      } else {
-        console.error(`  Agent ended with result subtype: ${message.subtype}`);
-      }
-    }
+  } catch (err) {
+    const base = err instanceof Error ? err.message : String(err);
+    throw new Error(withStderr(base, stderrChunks));
   }
 
   if (result === undefined) {
     const last = assistantTexts[assistantTexts.length - 1];
     if (last) return last.trim();
     throw new Error(
-      `No result received from Claude Agent SDK (subtype=${resultSubtype ?? 'none'}, turns=${turnCount})`,
+      withStderr(
+        `No result received from Claude Agent SDK (subtype=${resultSubtype ?? 'none'}, turns=${turnCount})`,
+        stderrChunks,
+      ),
     );
   }
 
