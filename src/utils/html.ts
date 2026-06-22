@@ -1,3 +1,5 @@
+import { marked } from 'marked';
+
 const IMG_TAG_RE = /<img\s[^>]*>/gi;
 
 const ENTITY_MAP: Record<string, string> = {
@@ -50,4 +52,14 @@ export function stripHtmlToText(html: string): string {
     .trim();
 
   return text;
+}
+
+/**
+ * Render Markdown to HTML for posting into an Azure DevOps work item comment.
+ * ADO comment text is stored and displayed as HTML — Markdown is NOT
+ * interpreted — so the agent's Markdown summary must be converted first, or
+ * tokens like `##`, `**bold**` and ``` fences show up literally.
+ */
+export function markdownToHtml(markdown: string): string {
+  return marked.parse(markdown.trim(), { async: false, gfm: true }).trim();
 }

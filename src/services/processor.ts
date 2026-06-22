@@ -16,7 +16,7 @@ import * as sdk from '../sdk/azure-devops-client.ts';
 import * as gen from './generator.ts';
 import * as linker from './skill-linker.ts';
 import { discoverSkills } from './skill-loader.ts';
-import { stripHtmlToText } from '../utils/html.ts';
+import { markdownToHtml, stripHtmlToText } from '../utils/html.ts';
 
 export interface ProcessorDeps {
   getWorkItem: (config: AppConfig, id: number) => Promise<WorkItemResponse>;
@@ -166,9 +166,12 @@ export async function processDocsItem(
     );
     log(`  #${itemId}: Attached ${attachmentName}`);
 
+    // ADO comments render as HTML, not Markdown, so the agent's Markdown
+    // summary must be converted — otherwise `##`, `**bold**` and ``` fences
+    // show up literally.
     const comment =
-      `📄 <b>Documentation article generated and attached:</b> ${attachmentName}<br><br>` +
-      `${escapeHtml(summary).replace(/\n/g, '<br>')}`;
+      `📄 <b>Documentation article generated and attached:</b> ${escapeHtml(attachmentName)}` +
+      `${markdownToHtml(summary)}`;
     await deps.addWorkItemComment(config, itemId, comment);
     log(`  #${itemId}: Posted confirmation comment`);
 

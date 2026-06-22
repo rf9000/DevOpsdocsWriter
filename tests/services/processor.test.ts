@@ -55,6 +55,29 @@ describe('processDocsItem', () => {
     expect(deps.addWorkItemComment).toHaveBeenCalledTimes(1);
   });
 
+  test('posts the comment as HTML, converting the Markdown summary', async () => {
+    const config = mockConfig({ outputDir: outDir });
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      generateDocs: mock((_cfg, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, '# Article\n');
+        return Promise.resolve('## Verdict\n\n**PASS** — documents `CB-3631`.');
+      }),
+      addWorkItemComment,
+    });
+
+    await processDocsItem(config, 42, deps);
+
+    expect(addWorkItemComment).toHaveBeenCalledTimes(1);
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('<b>Documentation article generated and attached:</b>');
+    expect(comment).toContain('<strong>PASS</strong>');
+    expect(comment).toContain('<code>CB-3631</code>');
+    // raw Markdown tokens must not leak into the rendered comment
+    expect(comment).not.toContain('## Verdict');
+    expect(comment).not.toContain('**PASS**');
+  });
+
   test('dry-run: writes article but performs no ADO writes', async () => {
     const config = mockConfig({ outputDir: outDir, dryRun: true });
     const deps = makeDeps();
