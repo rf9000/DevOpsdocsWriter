@@ -1,0 +1,5 @@
+# Shell scripts run inside the Linux container — they must use LF line endings
+# or the kernel rejects the shebang ("no such file or directory").
+*.sh text eol=lf
+entrypoint.sh text eol=lf
+Dockerfile text eol=lf
