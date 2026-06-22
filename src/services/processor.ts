@@ -130,6 +130,13 @@ export async function processDocsItem(
     }
 
     if (!existsSync(outputPath)) {
+      // The agent finished without writing the article to the expected path.
+      // Log its final message — it reveals whether the agent drafted the
+      // article inline, tried to write elsewhere, or bailed — so a silent
+      // "did not produce an article" is diagnosable from the logs.
+      const trimmed = summary.trim();
+      log(`  #${itemId}: No article at ${outputPath}. Agent final message (${trimmed.length} chars):`);
+      log(trimmed.length > 8000 ? `${trimmed.slice(0, 8000)}\n…(truncated)` : trimmed || '(empty)');
       return {
         itemId,
         documented: false,
