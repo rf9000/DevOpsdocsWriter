@@ -121,6 +121,10 @@ export async function generateDocs(
 
   let result: string | undefined;
   let resultSubtype: string | undefined;
+  // Detail extracted from an error result (auth failures, permission denials,
+  // …). The SDK carries the real cause in `errors`/`permission_denials`, NOT on
+  // stderr — without surfacing it, the failure reads as an opaque non-success.
+  let resultError: string | undefined;
   const assistantTexts: string[] = [];
   const toolUses = new Map<string, number>();
   let turnCount = 0;
@@ -179,10 +183,19 @@ export async function generateDocs(
         resultSubtype = message.subtype;
         if (message.subtype === 'success') {
           result = message.result;
-        } else if (message.subtype === 'error_max_turns') {
-          console.error(`  Agent hit max turns (${turnCount}).`);
         } else {
-          console.error(`  Agent ended with result subtype: ${message.subtype}`);
+          const errs = message.errors?.length ? message.errors.join('; ') : '';
+          const denials = message.permission_denials?.length
+            ? `denied tools: ${message.permission_denials.map((d) => d.tool_name).join(', ')}`
+            : '';
+          resultError = [errs, denials].filter(Boolean).join(' | ') || undefined;
+          if (message.subtype === 'error_max_turns') {
+            console.error(`  Agent hit max turns (${turnCount}).`);
+          } else {
+            console.error(
+              `  Agent ended with result subtype: ${message.subtype}${resultError ? ` — ${resultError}` : ''}`,
+            );
+          }
         }
       }
     }
@@ -194,9 +207,10 @@ export async function generateDocs(
   if (result === undefined) {
     const last = assistantTexts[assistantTexts.length - 1];
     if (last) return last.trim();
+    const detail = resultError ? `: ${resultError}` : '';
     throw new Error(
       withStderr(
-        `No result received from Claude Agent SDK (subtype=${resultSubtype ?? 'none'}, turns=${turnCount})`,
+        `No result received from Claude Agent SDK (subtype=${resultSubtype ?? 'none'}, turns=${turnCount})${detail}`,
         stderrChunks,
       ),
     );

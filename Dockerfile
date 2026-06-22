@@ -11,9 +11,12 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # The Agent SDK reads ~/.claude for auth + settings; the compose file mounts
-# the host's .claude to /home/claude/.claude, so HOME must point there.
+# the host's .claude to /home/claude/.claude, so HOME must point there. The
+# watcher runs as the non-root 'bun' user — Claude Code refuses to authenticate
+# (401) and rejects --dangerously-skip-permissions when run as root — so 'bun'
+# must own this home to write ~/.claude.json and refreshed OAuth tokens.
 ENV HOME=/home/claude
-RUN mkdir -p /home/claude/.claude
+RUN mkdir -p /home/claude/.claude && chown -R bun:bun /home/claude
 
 WORKDIR /app
 
@@ -26,6 +29,9 @@ RUN bun install --frozen-lockfile
 COPY . .
 
 # State is persisted via a named volume mounted here.
-RUN mkdir -p /app/.state /app/.output
+RUN mkdir -p /app/.state /app/.output && chown -R bun:bun /app
 
-CMD ["bun", "run", "src/cli/index.ts", "watch"]
+# Entrypoint fixes volume ownership as root, then drops to the non-root 'bun'
+# user to start the watcher (see entrypoint.sh for why root cannot run it).
+COPY --chmod=755 entrypoint.sh /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
