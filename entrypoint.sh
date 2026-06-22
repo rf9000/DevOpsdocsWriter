@@ -8,10 +8,12 @@ set -e
 # then drop privileges.
 if [ "$(id -u)" = "0" ]; then
   # State/output are named volumes; /home/claude is the agent's HOME where
-  # Claude Code writes ~/.claude.json and refreshed tokens. The bind-mounted
-  # ~/.claude already arrives owned by the host user (uid 1000 == bun), so we
-  # deliberately do NOT recurse into it.
-  chown bun:bun /home/claude 2>/dev/null || true
+  # Claude Code writes ~/.claude.json and refreshed tokens. We recurse into the
+  # bind-mounted ~/.claude too: all the agent services run as uid 1000, so we
+  # normalise the shared credential file to 1000 here. This also REPAIRS a file
+  # that an earlier root run may have rewritten as root:root (mode 600) — which
+  # otherwise locks every non-root service out of the shared credentials.
+  chown -R bun:bun /home/claude 2>/dev/null || true
   chown -R bun:bun /app/.state /app/.output 2>/dev/null || true
   exec su -s /bin/sh bun -c 'export HOME=/home/claude && cd /app && exec bun run src/cli/index.ts watch'
 fi
