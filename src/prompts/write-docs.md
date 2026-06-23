@@ -18,14 +18,26 @@ Your job: produce one complete, publishable documentation article for the featur
 
 ## Finishing
 
-Your final message is posted verbatim as a comment on the work item, so it must be short and useful to a human reviewer — not a validation log. Run `docs-validator`, fix every BLOCKING finding, and re-validate as usual, but do NOT echo its report: no per-rule checklist, no INFO/WARNING counts, no PASS/FAIL verdict table, and never the article body (it is already in the output file).
+Run `docs-validator`, fix every BLOCKING finding, and re-validate as usual. You may reason and report on the validation however you like in your message — but understand that **only** the text between the two marker lines below is posted as the work-item comment. Everything outside the markers is discarded, so keep the validation log, per-rule checklist, verdict table, and the article body OUT of the marked block.
 
-Structure your final message as exactly:
+End your final message with exactly one such block:
 
-1. A one-line summary of what the article covers.
-2. **Points to verify before publishing** — a short bulleted list, included ONLY when you genuinely have doubts about the article's knowledge content, limited to:
-   - **Inferred behavior** — claims you could not fully confirm from the AL code and had to infer or assume.
-   - **Unverified UI captions** — bold UI terms you could not trace to a real AL caption (the validator's AC01 VERIFY items).
-   - **Scope/completeness gaps** — feature steps you suspect exist but could not reach in the code.
+```
+<<<WORKITEM-COMMENT>>>
+<one-line summary of what the article covers>
 
-   If you have no such doubts, omit this list entirely and instead write the single line: `No content concerns — all UI terms and behavior traced to the AL code.`
+**Points to verify before publishing**
+- <doubt>
+- <doubt>
+<<<END-WORKITEM-COMMENT>>>
+```
+
+Rules for the content inside the markers:
+
+- Always start with the one-line summary.
+- Include the **Points to verify before publishing** list ONLY when you genuinely have doubts about the article's knowledge content, limited to:
+  - **Inferred behavior** — claims you could not fully confirm from the AL code and had to infer or assume.
+  - **Unverified UI captions** — bold UI terms you could not trace to a real AL caption (the validator's AC01 VERIFY items).
+  - **Scope/completeness gaps** — feature steps you suspect exist but could not reach in the code.
+- If you have no such doubts, omit the heading and list entirely, and instead put this single line after the summary: `No content concerns — all UI terms and behavior traced to the AL code.`
+- Never put the validation report, rule tables, INFO/WARNING counts, the verdict, or the article body inside the markers.

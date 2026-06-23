@@ -61,6 +61,21 @@ function log(message: string): void {
   console.log(`[${ts}] ${message}`);
 }
 
+const COMMENT_BLOCK_RE =
+  /<<<WORKITEM-COMMENT>>>\s*([\s\S]*?)\s*<<<END-WORKITEM-COMMENT>>>/;
+
+/**
+ * The agent is told to wrap the human-facing comment in
+ * `<<<WORKITEM-COMMENT>>>` … `<<<END-WORKITEM-COMMENT>>>` markers and keep its
+ * validation report outside them. We post only what's between the markers, so a
+ * verbose agent can't leak the full validator log into the work item. Falls
+ * back to the whole message when the markers are absent.
+ */
+export function extractCommentBody(agentMessage: string): string {
+  const match = COMMENT_BLOCK_RE.exec(agentMessage);
+  return (match?.[1] ?? agentMessage).trim();
+}
+
 export async function processDocsItem(
   config: AppConfig,
   itemId: number,
@@ -144,9 +159,11 @@ export async function processDocsItem(
       };
     }
 
+    const commentBody = extractCommentBody(summary);
+
     if (config.dryRun) {
       const summaryPath = join(outputDir, `workitem-${itemId}-summary.md`);
-      writeFileSync(summaryPath, summary.endsWith('\n') ? summary : `${summary}\n`);
+      writeFileSync(summaryPath, commentBody.endsWith('\n') ? commentBody : `${commentBody}\n`);
       log(`  #${itemId}: [DRY RUN] Article  → ${outputPath}`);
       log(`  #${itemId}: [DRY RUN] Summary  → ${summaryPath}`);
       log(`  #${itemId}: [DRY RUN] Skipping ADO writes`);
@@ -171,7 +188,7 @@ export async function processDocsItem(
     // show up literally.
     const comment =
       `📄 <b>Documentation article generated and attached:</b> ${escapeHtml(attachmentName)}` +
-      `${markdownToHtml(summary)}`;
+      `${markdownToHtml(commentBody)}`;
     await deps.addWorkItemComment(config, itemId, comment);
     log(`  #${itemId}: Posted confirmation comment`);
 

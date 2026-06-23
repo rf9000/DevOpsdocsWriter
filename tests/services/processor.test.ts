@@ -2,7 +2,7 @@ import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { processDocsItem } from '../../src/services/processor.ts';
+import { processDocsItem, extractCommentBody } from '../../src/services/processor.ts';
 import type { ProcessorDeps } from '../../src/services/processor.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
 import { mockConfig, mockWorkItem } from '../helpers.ts';
@@ -76,6 +76,39 @@ describe('processDocsItem', () => {
     // raw Markdown tokens must not leak into the rendered comment
     expect(comment).not.toContain('## Verdict');
     expect(comment).not.toContain('**PASS**');
+  });
+
+  test('posts only the marked comment block, not the validator dump', async () => {
+    const config = mockConfig({ outputDir: outDir });
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      generateDocs: mock((_cfg, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, '# Article\n');
+        return Promise.resolve(
+          'Validation Report\nAC01 — Bold UI term accuracy\nVerdict: PASS\n\n' +
+            '<<<WORKITEM-COMMENT>>>\n' +
+            'Documents the Request Header Log feature.\n\n' +
+            'No content concerns — all UI terms and behavior traced to the AL code.\n' +
+            '<<<END-WORKITEM-COMMENT>>>',
+        );
+      }),
+      addWorkItemComment,
+    });
+
+    await processDocsItem(config, 42, deps);
+
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('Documents the Request Header Log feature.');
+    expect(comment).toContain('No content concerns');
+    // the validator report outside the markers must not reach the comment
+    expect(comment).not.toContain('Validation Report');
+    expect(comment).not.toContain('AC01');
+    expect(comment).not.toContain('Verdict: PASS');
+    expect(comment).not.toContain('WORKITEM-COMMENT');
+  });
+
+  test('extractCommentBody falls back to the whole message without markers', () => {
+    expect(extractCommentBody('  plain summary  ')).toBe('plain summary');
   });
 
   test('dry-run: writes article but performs no ADO writes', async () => {
