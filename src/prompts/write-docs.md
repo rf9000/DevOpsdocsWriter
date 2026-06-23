@@ -18,4 +18,14 @@ Your job: produce one complete, publishable documentation article for the featur
 
 ## Finishing
 
-End your final message with the `docs-validator` verdict and a one-line summary of what the article covers. Do not include the full article body in your final message — it has already been written to the output file.
+Your final message is posted verbatim as a comment on the work item, so it must be short and useful to a human reviewer — not a validation log. Run `docs-validator`, fix every BLOCKING finding, and re-validate as usual, but do NOT echo its report: no per-rule checklist, no INFO/WARNING counts, no PASS/FAIL verdict table, and never the article body (it is already in the output file).
+
+Structure your final message as exactly:
+
+1. A one-line summary of what the article covers.
+2. **Points to verify before publishing** — a short bulleted list, included ONLY when you genuinely have doubts about the article's knowledge content, limited to:
+   - **Inferred behavior** — claims you could not fully confirm from the AL code and had to infer or assume.
+   - **Unverified UI captions** — bold UI terms you could not trace to a real AL caption (the validator's AC01 VERIFY items).
+   - **Scope/completeness gaps** — feature steps you suspect exist but could not reach in the code.
+
+   If you have no such doubts, omit this list entirely and instead write the single line: `No content concerns — all UI terms and behavior traced to the AL code.`
