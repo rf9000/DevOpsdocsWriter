@@ -14,6 +14,7 @@ export function mockConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     pollIntervalMinutes: 5,
     maxDocsPerDay: 5,
     claudeModel: 'claude-sonnet-4-6',
+    maxTurns: 60,
     promptPath: './prompt.md',
     stateDir: '.state',
     dryRun: false,

@@ -13,6 +13,7 @@ const envSchema = z.object({
   POLL_INTERVAL_MINUTES: z.coerce.number().default(15),
   MAX_DOCS_PER_DAY: z.coerce.number().default(5),
   CLAUDE_MODEL: z.string().default("claude-sonnet-4-6"),
+  MAX_TURNS: z.coerce.number().int().positive().default(60),
   PROMPT_PATH: z.string().default("src/prompts/write-docs.md"),
   STATE_DIR: z.string().default(".state"),
 });
@@ -44,6 +45,7 @@ export function loadConfig(
     pollIntervalMinutes: parsed.POLL_INTERVAL_MINUTES,
     maxDocsPerDay: parsed.MAX_DOCS_PER_DAY,
     claudeModel: parsed.CLAUDE_MODEL,
+    maxTurns: parsed.MAX_TURNS,
     promptPath: parsed.PROMPT_PATH,
     stateDir: parsed.STATE_DIR,
     dryRun: false,

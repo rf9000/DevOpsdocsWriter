@@ -139,7 +139,7 @@ export async function generateDocs(
       prompt: buildUserPrompt(context),
       options: {
         model: config.claudeModel,
-        maxTurns: 60,
+        maxTurns: config.maxTurns,
         tools: ['Read', 'Grep', 'Glob', 'Bash', 'Skill', 'LSP', 'Write', 'Edit'],
         permissionMode: 'bypassPermissions',
         allowDangerouslySkipPermissions: true,

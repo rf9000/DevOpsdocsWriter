@@ -17,6 +17,8 @@ export interface AppConfig {
   pollIntervalMinutes: number;
   maxDocsPerDay: number;
   claudeModel: string;
+  /** Maximum agent turns before the SDK aborts with error_max_turns. */
+  maxTurns: number;
   promptPath: string;
   stateDir: string;
   dryRun: boolean;
