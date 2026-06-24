@@ -14,6 +14,8 @@ export interface AppConfig {
   skillsSourceDir: string;
   /** Tag that marks a work item for documentation. */
   writeDocsTag: string;
+  /** Tag added once an article has been attached, so documented items are visible in ADO. */
+  docsWrittenTag: string;
   pollIntervalMinutes: number;
   maxDocsPerDay: number;
   claudeModel: string;

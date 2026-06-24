@@ -25,6 +25,7 @@ describe('loadConfig', () => {
   test('applies defaults for optional values', () => {
     const cfg = loadConfig(baseEnv());
     expect(cfg.writeDocsTag).toBe('write-docs');
+    expect(cfg.docsWrittenTag).toBe('Docs-Article-Written');
     expect(cfg.outputDir).toBe('.output');
     expect(cfg.skillsSourceDir).toBe('.claude/skills');
     expect(cfg.pollIntervalMinutes).toBe(15);

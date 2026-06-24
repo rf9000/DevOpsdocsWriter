@@ -14,6 +14,7 @@ function makeDeps(overrides: Partial<WatcherDeps> = {}): WatcherDeps {
       Promise.resolve({ itemId: id, documented: true }),
     ),
     removeTagFromWorkItem: mock(() => Promise.resolve()),
+    addTagToWorkItem: mock(() => Promise.resolve()),
     ...overrides,
   };
 }
@@ -47,13 +48,47 @@ describe('runPollCycle', () => {
     expect(store.isProcessed(102)).toBe(true);
   });
 
-  test('dry-run does not remove tags', async () => {
+  test('adds the docs-written tag to each documented item', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([101, 102])),
+    });
+    const config = mockConfig();
+    await runPollCycle(config, store, deps);
+
+    expect(deps.addTagToWorkItem).toHaveBeenCalledTimes(2);
+    expect(deps.addTagToWorkItem).toHaveBeenCalledWith(config, 101, config.docsWrittenTag);
+    expect(deps.addTagToWorkItem).toHaveBeenCalledWith(config, 102, config.docsWrittenTag);
+  });
+
+  test('a failed tag removal still adds the docs-written tag', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([101])),
+      removeTagFromWorkItem: mock(() => Promise.reject(new Error('boom'))),
+    });
+    const result = await runPollCycle(mockConfig(), store, deps);
+    expect(result.documented).toBe(1);
+    expect(deps.addTagToWorkItem).toHaveBeenCalledTimes(1);
+  });
+
+  test('dry-run does not remove or add tags', async () => {
     const deps = makeDeps({
       queryTaggedWorkItems: mock(() => Promise.resolve([101])),
     });
     const result = await runPollCycle(mockConfig({ dryRun: true }), store, deps);
     expect(result.documented).toBe(1);
     expect(deps.removeTagFromWorkItem).toHaveBeenCalledTimes(0);
+    expect(deps.addTagToWorkItem).toHaveBeenCalledTimes(0);
+  });
+
+  test('a failed item does not add the docs-written tag', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([300])),
+      processDocsItem: mock(() =>
+        Promise.resolve({ itemId: 300, documented: false, error: 'x' }),
+      ),
+    });
+    await runPollCycle(mockConfig(), store, deps);
+    expect(deps.addTagToWorkItem).toHaveBeenCalledTimes(0);
   });
 
   test('failed item counts as error, tag kept, not marked processed', async () => {

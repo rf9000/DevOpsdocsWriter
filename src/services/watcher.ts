@@ -11,12 +11,18 @@ export interface WatcherDeps {
     workItemId: number,
     tag: string,
   ) => Promise<void>;
+  addTagToWorkItem: (
+    config: AppConfig,
+    workItemId: number,
+    tag: string,
+  ) => Promise<void>;
 }
 
 const defaultDeps: WatcherDeps = {
   queryTaggedWorkItems: sdk.queryTaggedWorkItems,
   processDocsItem: proc.processDocsItem,
   removeTagFromWorkItem: sdk.removeTagFromWorkItem,
+  addTagToWorkItem: sdk.addTagToWorkItem,
 };
 
 function log(message: string): void {
@@ -58,6 +64,15 @@ export async function runPollCycle(
             log(`#${itemId}: Removed "${config.writeDocsTag}" tag`);
           } catch (tagErr) {
             log(`#${itemId}: Warning — failed to remove tag: ${tagErr}`);
+          }
+
+          // Mark the item as documented so it is visible in the ADO overview
+          // (idempotent — keeps an existing tag if the item was reopened).
+          try {
+            await deps.addTagToWorkItem(config, itemId, config.docsWrittenTag);
+            log(`#${itemId}: Added "${config.docsWrittenTag}" tag`);
+          } catch (tagErr) {
+            log(`#${itemId}: Warning — failed to add tag: ${tagErr}`);
           }
         }
       } else {

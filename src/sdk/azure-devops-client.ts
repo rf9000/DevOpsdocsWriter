@@ -164,6 +164,35 @@ export async function removeTagFromWorkItem(
   });
 }
 
+/**
+ * Add a tag to a work item, preserving existing tags. Idempotent: if the tag is
+ * already present (case-insensitive) the work item is left untouched and no
+ * request is made — so re-running over an item that was reopened keeps its tag.
+ */
+export async function addTagToWorkItem(
+  config: AppConfig,
+  workItemId: number,
+  tagToAdd: string,
+): Promise<void> {
+  const workItem = await getWorkItem(config, workItemId);
+  const currentTags = String(workItem.fields['System.Tags'] ?? '');
+  const tags = currentTags
+    .split(';')
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  if (tags.some((t) => t.toLowerCase() === tagToAdd.toLowerCase())) {
+    return;
+  }
+  const newTags = [...tags, tagToAdd].join('; ');
+  // Must use "replace" — "add" on System.Tags merges instead of overwriting
+  const path = `wit/workitems/${workItemId}?api-version=7.0`;
+  await adoFetchWithRetry<WorkItemResponse>(config, path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json-patch+json' },
+    body: JSON.stringify([{ op: 'replace', path: '/fields/System.Tags', value: newTags }]),
+  });
+}
+
 interface CommentResponse {
   id: number;
   text: string;

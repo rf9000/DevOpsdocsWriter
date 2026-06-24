@@ -10,6 +10,7 @@ import {
   getPullRequestContext,
   uploadAttachment,
   linkAttachmentToWorkItem,
+  addTagToWorkItem,
 } from '../../src/sdk/azure-devops-client.ts';
 import type { WorkItemResponse } from '../../src/types/index.ts';
 import { mockConfig } from '../helpers.ts';
@@ -119,6 +120,37 @@ describe('queryTaggedWorkItems', () => {
   test('returns empty when nothing matches WIQL', async () => {
     setMockFetch({ workItems: [] });
     expect(await queryTaggedWorkItems(mockConfig(), 'write-docs')).toEqual([]);
+  });
+});
+
+describe('addTagToWorkItem', () => {
+  test('appends the tag, preserving existing tags', async () => {
+    setSequentialMockFetch(
+      { body: { id: 7, fields: { 'System.Tags': 'write-docs; other' } } },
+      { body: { id: 7 } },
+    );
+
+    await addTagToWorkItem(mockConfig(), 7, 'Docs-Article-Written');
+
+    expect(mockFn).toHaveBeenCalledTimes(2);
+    const patch = mockFn.mock.calls[1]!;
+    expect(patch[1]!.method).toBe('PATCH');
+    const ops = JSON.parse(patch[1]!.body as string) as Array<{
+      op: string;
+      path: string;
+      value: string;
+    }>;
+    expect(ops[0]!.op).toBe('replace');
+    expect(ops[0]!.path).toBe('/fields/System.Tags');
+    expect(ops[0]!.value).toBe('write-docs; other; Docs-Article-Written');
+  });
+
+  test('is idempotent — no PATCH when the tag already exists (case-insensitive)', async () => {
+    setMockFetch({ id: 7, fields: { 'System.Tags': 'docs-article-written; other' } });
+
+    await addTagToWorkItem(mockConfig(), 7, 'Docs-Article-Written');
+
+    expect(mockFn).toHaveBeenCalledTimes(1); // only the read, no PATCH
   });
 });
 

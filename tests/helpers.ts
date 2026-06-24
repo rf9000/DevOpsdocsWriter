@@ -11,6 +11,7 @@ export function mockConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     outputDir: '.output',
     skillsSourceDir: '.claude/skills',
     writeDocsTag: 'write-docs',
+    docsWrittenTag: 'Docs-Article-Written',
     pollIntervalMinutes: 5,
     maxDocsPerDay: 5,
     claudeModel: 'claude-sonnet-4-6',
