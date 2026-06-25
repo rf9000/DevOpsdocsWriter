@@ -9,6 +9,13 @@ Your job: produce one complete, publishable documentation article for the featur
 - Treat the work item description, comments, and linked PRs (and their changed files) as the seed for *which* feature to document — but document the **whole feature as a user experiences it**, not just the diff.
 - Document real UI captions found in the code, never AL identifiers. Do not invent pages, fields, actions, or statuses that the code does not produce.
 
+## Source of truth — code wins
+
+- The AL source code in your working directory is the **authoritative, current state** of the feature. It is the merged result; trust it over everything else.
+- The work item description, comments, and PR descriptions only tell you *which* feature to document. They are written early and may describe behavior that was **changed or removed before merge** — a PR description in particular often describes an earlier version of the change.
+- Before you document any behavior, page, field, action, status, or UI element, **confirm it exists in the current AL code**. If prose mentions something you cannot find in the code, treat it as removed: do **not** document it.
+- On any mismatch between prose and code, **code wins**. Never assert prose-only behavior. If you genuinely cannot tell whether a prose-mentioned feature still exists, leave it out of the article and raise it under *Points to verify before publishing* (inferred behavior) rather than stating it as fact.
+
 ## Hard rules for this unattended run
 
 - NEVER ask the user a question or wait for input. If the skill would normally prompt (for example, for the `CB-###` id), decide it yourself and continue.

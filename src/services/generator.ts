@@ -284,7 +284,11 @@ export function buildUserPrompt(context: DocsContext): string {
         `**Status:** ${pr.status}  |  **Source:** ${pr.sourceRefName} → ${pr.targetRefName}`,
       );
       if (pr.description) {
-        lines.push('', pr.description);
+        lines.push(
+          '',
+          '**PR description (may be out of date — verify against the current code):**',
+          pr.description,
+        );
       }
       if (pr.changedFiles.length > 0) {
         lines.push(
@@ -297,6 +301,7 @@ export function buildUserPrompt(context: DocsContext): string {
     lines.push(
       '',
       'Use the changed files as entry points, but reconstruct the COMPLETE feature flow from the AL codebase (do not document only the diff).',
+      'The AL code in your working directory is the source of truth — it is the current, merged state of the feature. Descriptions, comments, and PR descriptions are written early and may describe behavior that was changed or removed before merge. If prose claims a behavior, page, field, action, or UI element you cannot find in the current code, treat it as removed: do not document it. On any mismatch between prose and code, code wins.',
     );
   }
 

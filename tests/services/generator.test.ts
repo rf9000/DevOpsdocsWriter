@@ -55,6 +55,30 @@ describe('buildUserPrompt', () => {
     expect(prompt).not.toContain('Work item comments');
     expect(prompt).not.toContain('Linked pull requests');
   });
+
+  test('flags PR descriptions as possibly stale and asserts code wins', () => {
+    const prompt = buildUserPrompt(
+      ctx({
+        pullRequests: [
+          {
+            pullRequestId: 7,
+            title: 'Add reconcile page',
+            description: 'Adds a notification when reconciliation completes.',
+            status: 'completed',
+            sourceRefName: 'refs/heads/feat',
+            targetRefName: 'refs/heads/main',
+            changedFiles: ['/src/Recon.al'],
+          },
+        ],
+      }),
+    );
+
+    // The PR description must be marked as potentially outdated...
+    expect(prompt).toMatch(/may (be )?(out of date|outdated|stale)/i);
+    // ...and the changed-files guidance must establish code-over-prose.
+    expect(prompt).toMatch(/source of truth/i);
+    expect(prompt).toMatch(/do not document/i);
+  });
 });
 
 describe('buildSystemPrompt', () => {
