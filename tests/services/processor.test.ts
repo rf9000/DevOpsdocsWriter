@@ -2,7 +2,11 @@ import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { processDocsItem, extractCommentBody } from '../../src/services/processor.ts';
+import {
+  processDocsItem,
+  extractCommentBody,
+  extractArticleBody,
+} from '../../src/services/processor.ts';
 import type { ProcessorDeps } from '../../src/services/processor.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
 import { mockConfig, mockWorkItem } from '../helpers.ts';
@@ -154,7 +158,7 @@ describe('processDocsItem', () => {
     expect(getPr).toHaveBeenCalledTimes(1);
   });
 
-  test('fails when the agent produces no article file', async () => {
+  test('fails when the agent produces no article file and no recoverable article block', async () => {
     const config = mockConfig({ outputDir: outDir });
     const deps = makeDeps({
       generateDocs: mock(() => Promise.resolve('done')), // writes nothing
@@ -165,6 +169,38 @@ describe('processDocsItem', () => {
     expect(result.error).toContain('did not produce an article');
     expect(deps.uploadAttachment).toHaveBeenCalledTimes(0);
     expect(deps.removeSkillJunctions).toHaveBeenCalledTimes(1);
+  });
+
+  test('recovers the article from the agent message when no file was written', async () => {
+    const config = mockConfig({ outputDir: outDir });
+    const article = '```meta\nid: CB-999\n```\n\n# Recovered Feature\n\nBody text.';
+    const deps = makeDeps({
+      // Agent drafted the article inline and forgot to Write the file.
+      generateDocs: mock(() =>
+        Promise.resolve(
+          `Here is the article.\n\n<<<ARTICLE>>>\n${article}\n<<<END-ARTICLE>>>\n\n` +
+            `<<<WORKITEM-COMMENT>>>\nDocuments the recovered feature.\n<<<END-WORKITEM-COMMENT>>>`,
+        ),
+      ),
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(result.articlePath).toContain('workitem-42-docs.md');
+    // The recovered article was written to disk and uploaded.
+    expect(existsSync(result.articlePath!)).toBe(true);
+    expect(readFileSync(result.articlePath!, 'utf-8')).toContain('# Recovered Feature');
+    expect(deps.uploadAttachment).toHaveBeenCalledTimes(1);
+    expect(deps.linkAttachmentToWorkItem).toHaveBeenCalledTimes(1);
+    expect(deps.addWorkItemComment).toHaveBeenCalledTimes(1);
+  });
+
+  test('extractArticleBody returns the marked block, or null when absent', () => {
+    expect(
+      extractArticleBody('pre\n<<<ARTICLE>>>\n# Title\nbody\n<<<END-ARTICLE>>>\npost'),
+    ).toBe('# Title\nbody');
+    expect(extractArticleBody('no markers here')).toBeNull();
   });
 
   test('removes junctions even if generation throws', async () => {

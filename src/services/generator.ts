@@ -244,9 +244,9 @@ export function buildSystemPrompt(
     `## Output and automation rules\n\n` +
       `- This is an UNATTENDED run. NEVER ask the user a question or wait for input — make the best decision and proceed.\n` +
       `- When the skill needs the unique \`CB-###\` article id, AUTO-SELECT the next unused id by scanning the docs repository for the highest existing \`CB-\` number and incrementing it. Do not prompt.\n` +
-      `- Write the FINAL, validated article to EXACTLY this absolute path: \`${context.outputPath}\`.\n` +
+      `- You MUST use the \`Write\` tool to save the FINAL, validated article to EXACTLY this absolute path: \`${context.outputPath}\`. The file is the deliverable; drafting it only in your message is a FAILED run. Do not end your turn until that file exists.\n` +
       `- Do NOT create or leave any file inside the docs repository — it is read-only context. All writes must go to the output path above.\n` +
-      `- End your final message with the \`docs-validator\` verdict and a one-line summary of what the article covers.`,
+      `- Include a verbatim safety copy of the article between \`<<<ARTICLE>>>\` and \`<<<END-ARTICLE>>>\` markers in your final message (the exact contents you wrote to the path), and end with the \`docs-validator\` verdict and a one-line summary of what the article covers.`,
   );
 
   return sections.join('\n\n');

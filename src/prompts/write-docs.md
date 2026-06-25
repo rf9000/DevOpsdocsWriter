@@ -20,14 +20,27 @@ Your job: produce one complete, publishable documentation article for the featur
 
 - NEVER ask the user a question or wait for input. If the skill would normally prompt (for example, for the `CB-###` id), decide it yourself and continue.
 - For the `CB-###` article id: scan the docs repository for the highest existing `CB-` number and use the next unused one.
-- Write the FINAL, validated article to EXACTLY the absolute output path given in your instructions. Do not leave any file inside the docs repository — it is read-only reference for tone, structure, and the id lookup. All file writes must go to the output path.
+- You MUST use the `Write` tool to save the FINAL, validated article to EXACTLY the absolute output path given in your instructions. This file IS the deliverable — drafting the article only in your chat message is NOT enough and counts as a failed run. Do not end your turn until the file exists at that path. Do not leave any file inside the docs repository — it is read-only reference for tone, structure, and the id lookup. All file writes must go to the output path.
 - Run `docs-validator` on the finished article, fix BLOCKING findings, and re-validate before finishing.
 
 ## Finishing
 
-Run `docs-validator`, fix every BLOCKING finding, and re-validate as usual. You may reason and report on the validation however you like in your message — but understand that **only** the text between the two marker lines below is posted as the work-item comment. Everything outside the markers is discarded, so keep the validation log, per-rule checklist, verdict table, and the article body OUT of the marked block.
+Run `docs-validator`, fix every BLOCKING finding, and re-validate as usual.
 
-End your final message with exactly one such block:
+Before you end your turn, confirm two things are in place:
+
+1. **The article file exists** at the absolute output path (you `Write` it there — see the hard rules above).
+2. **A safety copy of the article** is included verbatim in your final message between `<<<ARTICLE>>>` and `<<<END-ARTICLE>>>` markers. Paste the EXACT file contents you wrote — same `meta` block, same body — with nothing added inside the markers. This is a recovery copy in case the file write is lost; it does not replace step 1.
+
+```
+<<<ARTICLE>>>
+<the exact, full article you wrote to the output path>
+<<<END-ARTICLE>>>
+```
+
+You may reason and report on the validation however you like in your message — but understand that **only** the text between the work-item-comment marker lines below is posted as the work-item comment. Everything outside those markers is discarded, so keep the validation log, per-rule checklist, verdict table, and the article body OUT of the comment block.
+
+Also end your final message with exactly one such comment block:
 
 ```
 <<<WORKITEM-COMMENT>>>

@@ -64,6 +64,22 @@ function log(message: string): void {
 const COMMENT_BLOCK_RE =
   /<<<WORKITEM-COMMENT>>>\s*([\s\S]*?)\s*<<<END-WORKITEM-COMMENT>>>/;
 
+const ARTICLE_BLOCK_RE = /<<<ARTICLE>>>\s*([\s\S]*?)\s*<<<END-ARTICLE>>>/;
+
+/**
+ * Recover the article body the agent embeds between `<<<ARTICLE>>>` …
+ * `<<<END-ARTICLE>>>` markers. The agent is required to Write the validated
+ * article to the output path AND mirror it here as a safety copy; when it
+ * drafts the article inline but skips the Write, this lets the pipeline still
+ * attach + comment instead of failing closed. Returns null when no block is
+ * present (genuinely no article produced).
+ */
+export function extractArticleBody(agentMessage: string): string | null {
+  const match = ARTICLE_BLOCK_RE.exec(agentMessage);
+  const body = match?.[1];
+  return body === undefined ? null : body.trim();
+}
+
 /**
  * The agent is told to wrap the human-facing comment in
  * `<<<WORKITEM-COMMENT>>>` … `<<<END-WORKITEM-COMMENT>>>` markers and keep its
@@ -146,17 +162,29 @@ export async function processDocsItem(
 
     if (!existsSync(outputPath)) {
       // The agent finished without writing the article to the expected path.
-      // Log its final message — it reveals whether the agent drafted the
-      // article inline, tried to write elsewhere, or bailed — so a silent
-      // "did not produce an article" is diagnosable from the logs.
-      const trimmed = summary.trim();
-      log(`  #${itemId}: No article at ${outputPath}. Agent final message (${trimmed.length} chars):`);
-      log(trimmed.length > 8000 ? `${trimmed.slice(0, 8000)}\n…(truncated)` : trimmed || '(empty)');
-      return {
-        itemId,
-        documented: false,
-        error: `Agent did not produce an article at ${outputPath}`,
-      };
+      // It is required to mirror the final article between <<<ARTICLE>>>
+      // markers as a safety copy — recover from that so a forgotten Write
+      // doesn't lose the whole article (the costly part is already done).
+      const recovered = extractArticleBody(summary);
+      if (recovered) {
+        writeFileSync(outputPath, recovered.endsWith('\n') ? recovered : `${recovered}\n`);
+        log(
+          `  #${itemId}: Agent did not Write the article; recovered it from the ` +
+            `final message (${recovered.length} chars) → ${outputPath}`,
+        );
+      } else {
+        // No file and no recoverable block. Log the final message — it reveals
+        // whether the agent drafted elsewhere or bailed — so a silent "did not
+        // produce an article" is diagnosable from the logs.
+        const trimmed = summary.trim();
+        log(`  #${itemId}: No article at ${outputPath} and no <<<ARTICLE>>> block. Agent final message (${trimmed.length} chars):`);
+        log(trimmed.length > 8000 ? `${trimmed.slice(0, 8000)}\n…(truncated)` : trimmed || '(empty)');
+        return {
+          itemId,
+          documented: false,
+          error: `Agent did not produce an article at ${outputPath}`,
+        };
+      }
     }
 
     const commentBody = extractCommentBody(summary);
