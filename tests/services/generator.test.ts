@@ -19,6 +19,7 @@ function ctx(overrides: Partial<DocsContext> = {}): DocsContext {
     pullRequests: [],
     discoveredSkills: [],
     outputPath: 'C:/out/workitem-42-docs.md',
+    docsRepoPath: 'C:/repos/continia.docs.articles',
     ...overrides,
   };
 }
@@ -103,6 +104,21 @@ describe('buildSystemPrompt', () => {
     expect(sys).toContain('CB-###');
     expect(sys).toContain('C:/out/file.md');
     expect(sys).toContain('UNATTENDED');
+  });
+
+  test('gives the agent the docs repo path and the new/update/changelog protocol', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({ docsRepoPath: 'C:/repos/continia.docs.articles' }),
+    );
+    // The docs set path must be passed so detection of existing articles works.
+    expect(sys).toContain('C:/repos/continia.docs.articles');
+    // The three output kinds and the classification marker must be specified.
+    expect(sys).toContain('newfeature');
+    expect(sys).toContain('update');
+    expect(sys).toContain('changelog');
+    expect(sys).toContain('DOCS-OUTPUT-KIND');
   });
 });
 

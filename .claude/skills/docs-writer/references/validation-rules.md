@@ -18,8 +18,8 @@ The lint script implements every `[script]` rule below and nothing else. Everyth
 
 | ID | Rule | Severity | Enforcement |
 |----|------|----------|-------------|
-| FM01 | Article starts with a YAML frontmatter block delimited by `---` on its own first line and a closing `---`. | BLOCKING | [script] |
-| FM02 | Frontmatter contains all five keys: `title`, `description`, `date`, `id`, `lang`. | BLOCKING | [script] |
+| FM01 | Article starts with a metadata block: a ` ```meta ` fenced block (GitBook format) or a legacy `--- ... ---` YAML block. New articles use ` ```meta `; both are accepted while the corpus migrates. | BLOCKING | [script] |
+| FM02 | The metadata block contains all five keys: `title`, `date`, `description`, `id`, `lang`. | BLOCKING | [script] |
 | FM03 | `date` matches `DD-MM-YYYY` (e.g. `18-03-2026`). | BLOCKING | [script] |
 | FM04 | `id` matches `CB-` followed by digits (e.g. `CB-130`). | BLOCKING | [script] |
 | FM05 | `lang` is exactly `en`. | BLOCKING | [script] |

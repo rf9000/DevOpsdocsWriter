@@ -6,6 +6,8 @@ import {
   processDocsItem,
   extractCommentBody,
   extractArticleBody,
+  extractOutputKind,
+  deliverableFileName,
 } from '../../src/services/processor.ts';
 import type { ProcessorDeps } from '../../src/services/processor.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
@@ -51,7 +53,8 @@ describe('processDocsItem', () => {
     const result = await processDocsItem(config, 42, deps);
 
     expect(result.documented).toBe(true);
-    expect(result.articlePath).toContain('workitem-42-docs.md');
+    // No classification marker → defaults to a new-feature article.
+    expect(result.articlePath).toContain('workitem-42-newfeature.md');
     expect(deps.createSkillJunctions).toHaveBeenCalledTimes(1);
     expect(deps.removeSkillJunctions).toHaveBeenCalledTimes(1);
     expect(deps.uploadAttachment).toHaveBeenCalledTimes(1);
@@ -187,7 +190,7 @@ describe('processDocsItem', () => {
     const result = await processDocsItem(config, 42, deps);
 
     expect(result.documented).toBe(true);
-    expect(result.articlePath).toContain('workitem-42-docs.md');
+    expect(result.articlePath).toContain('workitem-42-newfeature.md');
     // The recovered article was written to disk and uploaded.
     expect(existsSync(result.articlePath!)).toBe(true);
     expect(readFileSync(result.articlePath!, 'utf-8')).toContain('# Recovered Feature');
@@ -213,5 +216,92 @@ describe('processDocsItem', () => {
     expect(result.documented).toBe(false);
     expect(result.error).toContain('boom');
     expect(deps.removeSkillJunctions).toHaveBeenCalledTimes(1);
+  });
+
+  test('an update deliverable is named for its target id and framed as an update', async () => {
+    const config = mockConfig({ outputDir: outDir });
+    const uploadAttachment = mock(() =>
+      Promise.resolve({ id: 'a1', url: 'https://example.com/a1' }),
+    );
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      generateDocs: mock((_cfg, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, '# Update to CB-142\n');
+        return Promise.resolve(
+          '<<<WORKITEM-COMMENT>>>\nDelta update to the Payment approval article.\n<<<END-WORKITEM-COMMENT>>>\n' +
+            '<<<DOCS-OUTPUT-KIND>>>\nkind: update\ntarget: CB-142\n<<<END-DOCS-OUTPUT-KIND>>>',
+        );
+      }),
+      uploadAttachment,
+      addWorkItemComment,
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(result.articlePath).toContain('workitem-42-update-CB-142.md');
+    // The attachment carries the typed, target-bearing name.
+    const attachName = (uploadAttachment.mock.calls[0] as unknown[])[1] as string;
+    expect(attachName).toBe('workitem-42-update-CB-142.md');
+    // The comment header is framed as an update for the target id, not a new article.
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('Documentation update for CB-142 attached:');
+    expect(comment).not.toContain('article generated');
+  });
+
+  test('a changelog deliverable is named and framed as a changelog entry', async () => {
+    const config = mockConfig({ outputDir: outDir });
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      generateDocs: mock((_cfg, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, 'Changelog: fixed a rounding bug.\n');
+        return Promise.resolve(
+          '<<<DOCS-OUTPUT-KIND>>>\nkind: changelog\n<<<END-DOCS-OUTPUT-KIND>>>',
+        );
+      }),
+      addWorkItemComment,
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.articlePath).toContain('workitem-42-changelog.md');
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('Changelog entry generated and attached:');
+  });
+});
+
+describe('extractOutputKind', () => {
+  test('defaults to newfeature when the marker is absent (backward compatible)', () => {
+    expect(extractOutputKind('just a summary, no marker')).toEqual({ kind: 'newfeature' });
+  });
+
+  test('parses an update with its target id', () => {
+    const msg = 'pre\n<<<DOCS-OUTPUT-KIND>>>\nkind: update\ntarget: CB-142\n<<<END-DOCS-OUTPUT-KIND>>>\npost';
+    expect(extractOutputKind(msg)).toEqual({ kind: 'update', target: 'CB-142' });
+  });
+
+  test('parses newfeature and changelog kinds', () => {
+    expect(
+      extractOutputKind('<<<DOCS-OUTPUT-KIND>>>\nkind: newfeature\n<<<END-DOCS-OUTPUT-KIND>>>'),
+    ).toEqual({ kind: 'newfeature' });
+    expect(
+      extractOutputKind('<<<DOCS-OUTPUT-KIND>>>\nkind: changelog\n<<<END-DOCS-OUTPUT-KIND>>>'),
+    ).toEqual({ kind: 'changelog' });
+  });
+
+  test('drops a stray target on a non-update kind', () => {
+    const msg = '<<<DOCS-OUTPUT-KIND>>>\nkind: newfeature\ntarget: CB-9\n<<<END-DOCS-OUTPUT-KIND>>>';
+    expect(extractOutputKind(msg)).toEqual({ kind: 'newfeature' });
+  });
+});
+
+describe('deliverableFileName', () => {
+  test('encodes each kind in the filename', () => {
+    expect(deliverableFileName(42, { kind: 'newfeature' })).toBe('workitem-42-newfeature.md');
+    expect(deliverableFileName(42, { kind: 'update', target: 'CB-142' })).toBe(
+      'workitem-42-update-CB-142.md',
+    );
+    expect(deliverableFileName(42, { kind: 'update' })).toBe('workitem-42-update.md');
+    expect(deliverableFileName(42, { kind: 'changelog' })).toBe('workitem-42-changelog.md');
   });
 });

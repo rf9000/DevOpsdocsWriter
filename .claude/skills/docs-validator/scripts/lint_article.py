@@ -49,12 +49,24 @@ def normalize_title(text):
 
 
 def parse_frontmatter(lines):
-    """Return (dict, end_line_index) or (None, -1) if no frontmatter."""
-    if not lines or lines[0].strip() != "---":
+    """Return (dict, end_line_index) or (None, -1) if no metadata block.
+
+    Accepts the GitBook fenced form (```meta ... ```) and the legacy YAML form
+    (--- ... ---). Both coexist while the corpus migrates to GitBook, so either
+    delimiter is valid; new articles use ```meta.
+    """
+    if not lines:
+        return None, -1
+    first = lines[0].strip()
+    if first == "---":
+        is_closing = lambda s: s == "---"
+    elif re.match(r"^`{3,}\s*meta\s*$", first):
+        is_closing = lambda s: s.startswith("```")
+    else:
         return None, -1
     fm = {}
     for i in range(1, len(lines)):
-        if lines[i].strip() == "---":
+        if is_closing(lines[i].strip()):
             return fm, i
         m = re.match(r"^([A-Za-z_][\w-]*):\s*(.*)$", lines[i])
         if m:
@@ -79,7 +91,7 @@ def lint(path):
     # ---- A. Frontmatter ----
     fm, fm_end = parse_frontmatter(lines)
     if fm is None:
-        add("FM01", BLOCKING, 1, "Missing YAML frontmatter block (--- ... ---) at top of file.")
+        add("FM01", BLOCKING, 1, "Missing metadata block (```meta ... ``` or --- ... ---) at top of file.")
         fm = {}
     else:
         required = ["title", "description", "date", "id", "lang"]
