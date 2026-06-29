@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 
 import type {
@@ -65,6 +65,63 @@ const COMMENT_BLOCK_RE =
   /<<<WORKITEM-COMMENT>>>\s*([\s\S]*?)\s*<<<END-WORKITEM-COMMENT>>>/;
 
 const ARTICLE_BLOCK_RE = /<<<ARTICLE>>>\s*([\s\S]*?)\s*<<<END-ARTICLE>>>/;
+
+const OUTPUT_KIND_BLOCK_RE =
+  /<<<DOCS-OUTPUT-KIND>>>\s*([\s\S]*?)\s*<<<END-DOCS-OUTPUT-KIND>>>/;
+
+/** The three kinds of deliverable the agent can produce (see code-to-docs.md §6). */
+export type OutputKind = 'newfeature' | 'update' | 'changelog';
+
+export interface OutputClassification {
+  kind: OutputKind;
+  /** The existing article id an update targets (e.g. `CB-142`); only set for `update`. */
+  target?: string;
+}
+
+/**
+ * Read the agent's `<<<DOCS-OUTPUT-KIND>>>` marker, which tells the pipeline
+ * whether it produced a new article, a delta update, or a changelog entry so the
+ * deliverable can be named and framed accordingly. Defaults to `newfeature` when
+ * the marker is absent — that is the historical always-new-article behavior, so
+ * older agent output stays backward compatible.
+ */
+export function extractOutputKind(agentMessage: string): OutputClassification {
+  const block = OUTPUT_KIND_BLOCK_RE.exec(agentMessage)?.[1];
+  if (!block) return { kind: 'newfeature' };
+  const kind =
+    (/kind:\s*(newfeature|update|changelog)/i.exec(block)?.[1]?.toLowerCase() as
+      | OutputKind
+      | undefined) ?? 'newfeature';
+  const target = /target:\s*(CB-\d+)/i.exec(block)?.[1]?.toUpperCase();
+  return kind === 'update' && target ? { kind, target } : { kind };
+}
+
+/** Typed deliverable filename so each attachment is self-identifying. */
+export function deliverableFileName(itemId: number, c: OutputClassification): string {
+  switch (c.kind) {
+    case 'update':
+      return c.target
+        ? `workitem-${itemId}-update-${c.target}.md`
+        : `workitem-${itemId}-update.md`;
+    case 'changelog':
+      return `workitem-${itemId}-changelog.md`;
+    default:
+      return `workitem-${itemId}-newfeature.md`;
+  }
+}
+
+/** The HTML comment header line, framed to match the kind of deliverable. */
+function commentHeader(c: OutputClassification, attachmentName: string): string {
+  const name = escapeHtml(attachmentName);
+  switch (c.kind) {
+    case 'update':
+      return `📄 <b>Documentation update${c.target ? ` for ${escapeHtml(c.target)}` : ''} attached:</b> ${name}`;
+    case 'changelog':
+      return `📄 <b>Changelog entry generated and attached:</b> ${name}`;
+    default:
+      return `📄 <b>Documentation article generated and attached:</b> ${name}`;
+  }
+}
 
 /**
  * Recover the article body the agent embeds between `<<<ARTICLE>>>` …
@@ -147,6 +204,7 @@ export async function processDocsItem(
       pullRequests,
       discoveredSkills: discovered,
       outputPath,
+      docsRepoPath: config.docsRepoPath,
     };
 
     let summary: string;
@@ -187,40 +245,53 @@ export async function processDocsItem(
       }
     }
 
+    // The agent writes to a fixed path; its classification marker decides the
+    // final, self-identifying deliverable name (new article / delta update /
+    // changelog). Rename so the on-disk file, the attachment, and articlePath
+    // all carry the kind.
+    const classification = extractOutputKind(summary);
+    const deliverableName = deliverableFileName(itemId, classification);
+    const deliverablePath = join(outputDir, deliverableName);
+    if (deliverablePath !== outputPath) {
+      renameSync(outputPath, deliverablePath);
+    }
+    log(
+      `  #${itemId}: Classified as ${classification.kind}` +
+        `${classification.target ? ` (${classification.target})` : ''} → ${deliverableName}`,
+    );
+
     const commentBody = extractCommentBody(summary);
 
     if (config.dryRun) {
       const summaryPath = join(outputDir, `workitem-${itemId}-summary.md`);
       writeFileSync(summaryPath, commentBody.endsWith('\n') ? commentBody : `${commentBody}\n`);
-      log(`  #${itemId}: [DRY RUN] Article  → ${outputPath}`);
+      log(`  #${itemId}: [DRY RUN] Output   → ${deliverablePath}`);
       log(`  #${itemId}: [DRY RUN] Summary  → ${summaryPath}`);
       log(`  #${itemId}: [DRY RUN] Skipping ADO writes`);
-      return { itemId, documented: true, articlePath: outputPath, summaryPath };
+      return { itemId, documented: true, articlePath: deliverablePath, summaryPath };
     }
 
-    // Attach the article, then comment.
-    const content = readFileSync(outputPath, 'utf-8');
-    const attachmentName = fileName;
+    // Attach the deliverable, then comment.
+    const content = readFileSync(deliverablePath, 'utf-8');
+    const attachmentName = deliverableName;
     const uploaded = await deps.uploadAttachment(config, attachmentName, content);
     await deps.linkAttachmentToWorkItem(
       config,
       itemId,
       uploaded.url,
       attachmentName,
-      'Generated documentation article',
+      `Generated documentation (${classification.kind})`,
     );
     log(`  #${itemId}: Attached ${attachmentName}`);
 
     // ADO comments render as HTML, not Markdown, so the agent's Markdown
     // summary must be converted — otherwise `##`, `**bold**` and ``` fences
     // show up literally.
-    const comment =
-      `📄 <b>Documentation article generated and attached:</b> ${escapeHtml(attachmentName)}` +
-      `${markdownToHtml(commentBody)}`;
+    const comment = `${commentHeader(classification, attachmentName)}${markdownToHtml(commentBody)}`;
     await deps.addWorkItemComment(config, itemId, comment);
     log(`  #${itemId}: Posted confirmation comment`);
 
-    return { itemId, documented: true, articlePath: outputPath };
+    return { itemId, documented: true, articlePath: deliverablePath };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     log(`  #${itemId}: Error — ${errorMsg}`);

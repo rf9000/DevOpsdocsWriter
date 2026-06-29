@@ -26,22 +26,24 @@ Complete reference for writing documentation that matches the existing Continia 
 
 ## 1. Frontmatter Reference
 
-Every documentation article starts with this YAML block:
+Every documentation article starts with a fenced **`meta`** block (the GitBook format the docs site is moving to):
 
-```yaml
----
+````
+```meta
 title: Setting up direct debit in Continia Banking
-description: Learn how to configure and manage direct debit in Continia Banking.
 date: 18-03-2026
+description: Learn how to configure and manage direct debit in Continia Banking.
 id: CB-130
 lang: en
----
 ```
+````
 
 **Field rules:**
+- Use the ` ```meta ` … ` ``` ` fence, **not** a `--- ... ---` YAML block. This is non-negotiable for new content. Older articles in the corpus still use `---`; they are mid-migration. Write new articles with ` ```meta ` **regardless of what a sibling shows** — reading a sibling for tone does NOT license copying its legacy `---` block or its field order. Emitting a `--- ... ---` block (or the wrong field order) in a new article is a defect, even though the validator currently tolerates `---` during the migration.
+- Field order: `title`, `date`, `description`, `id`, `lang`.
 - `title`: Descriptive, action-oriented. For setup articles: "Setting up [feature] in Continia Banking". For conceptual: "[Feature] in Continia Banking".
-- `description`: 1-2 sentences. Starts with "Learn how to..." or describes what the article covers.
 - `date`: DD-MM-YYYY format (European). Use today's date for new articles.
+- `description`: 1-2 sentences. Starts with "Learn how to..." or plainly describes what the article covers (e.g. "How to enable...").
 - `id`: Format `CB-###`. Must be unique across the entire documentation set.
 - `lang`: Always `en`.
 
@@ -66,20 +68,53 @@ A larger feature often needs more than one: a **Conceptual** article (what/why) 
 more **Setup/How-to** articles (configure/use), linked from an **Overview**. When in doubt,
 split rather than mixing concept and procedure in one page.
 
+### Proportionality — match the article to the size of the change
+
+The article's length must track the size of what changed, not fill a template. **A small change
+gets a small article.** When the brief gives you a change magnitude (the `docs-article-generator`
+passes one), let it cap the depth:
+
+| Magnitude | Write |
+|-----------|-------|
+| **Minor tweak** (a couple of new fields, a toggle) | One tight section: a short intro + a single `## To ...` procedure. No "how it works"/priority-hierarchy explainer, no reference table unless the field list itself needs one, at most one hint. |
+| **Workflow improvement** | The changed flow only — do not re-document the surrounding feature. |
+| **New feature / module** | Full structure as the feature warrants. |
+
+Anti-filler rules:
+
+- The number of sections should track the number of things the user actually has to **understand
+  or do**. If a section restates the intro or explains mechanics the user does not act on, cut it.
+- Do not invent explainer sections, comparison tables, or extra `{% hint %}` boxes to make a
+  thin change look substantial. Padding produces text that "sounds fine without really saying
+  much" — the opposite of useful.
+- Prefer one precise sentence over a paragraph of generic framing.
+
+### Impact in the introduction — only when sourced
+
+Introductions frame business value (problem solved, when it is useful) **before** mechanics — but
+only when that value is actually known. The *why/when/before-vs-after* is **not** in the code; it
+comes from the work item, comments, or PR (the brief supplies it).
+
+- When the impact is sourced, lead with it: the problem, then what the user can now do.
+- When it is **not** sourced, keep the intro minimal (what the feature does and where) rather than
+  manufacturing a plausible-sounding rationale. Inventing a "why" is filler and can be wrong.
+- Never assert a before/after the brief did not give you. Unknown impact is flagged for a human
+  (the generator surfaces it to the author/SME), not written into the article as fact.
+
 ### 2.1 Setup/How-to Articles
 
 **Title pattern:** "Setting up [feature] in Continia Banking" or "[Action] in Continia Banking"
 
 **Template:**
 
-```markdown
----
+````markdown
+```meta
 title: Setting up [feature] in Continia Banking
-description: Learn how to configure [feature] in Continia Banking.
 date: DD-MM-YYYY
+description: Learn how to configure [feature] in Continia Banking.
 id: CB-[number]
 lang: en
----
+```
 
 # Setting up [feature]
 
@@ -120,6 +155,7 @@ lang: en
 [Related article 1](@CB-###)
 [Related article 2](@CB-###)
 ```
+````
 
 **Verbatim example (from Setting up direct debit):**
 
@@ -172,14 +208,14 @@ Some setup articles open with a "Key considerations" section:
 
 **Template:**
 
-```markdown
----
+````markdown
+```meta
 title: [Section name] overview
-description: [Brief overview of what this section covers.]
 date: DD-MM-YYYY
+description: [Brief overview of what this section covers.]
 id: CB-[number]
 lang: en
----
+```
 
 # Overview
 
@@ -203,6 +239,7 @@ lang: en
 
 * [Article title](@CB-###) - [description].
 ```
+````
 
 **Verbatim example (from Payment Reconciliation Journal Overview):**
 
@@ -240,14 +277,14 @@ Import external payment data into the journal:
 
 **Template:**
 
-```markdown
----
+````markdown
+```meta
 title: [Topic] in Continia Banking
-description: [Brief description of the concept.]
 date: DD-MM-YYYY
+description: [Brief description of the concept.]
 id: CB-[number]
 lang: en
----
+```
 
 # [Topic] in Continia Banking
 
@@ -278,6 +315,7 @@ standard Business Central functionality.]
 [Related article 1](@CB-###)
 [Related article 2](@CB-###)
 ```
+````
 
 **Verbatim example (from Bank communication):**
 
@@ -320,14 +358,14 @@ Setup** page. On the **Bank Account Card** page, on the action bar, select
 
 **Template:**
 
-```markdown
----
+````markdown
+```meta
 title: Onboarding [Bank Name] for Continia Banking
-description: Information about [Bank Name] and how to set up direct communication.
 date: DD-MM-YYYY
+description: Information about [Bank Name] and how to set up direct communication.
 id: CB-[number]
 lang: en
----
+```
 
 # Onboarding [Bank Name]
 
@@ -371,6 +409,7 @@ To set up direct communication, you need the following information:
 [Related bank article](@CB-###)
 [Setting up bank accounts](@CB-37)
 ```
+````
 
 ---
 
@@ -380,14 +419,14 @@ To set up direct communication, you need the following information:
 
 **Template:**
 
-```markdown
----
+````markdown
+```meta
 title: Detailed Changelog for Continia Banking [Year] [Release]
-description: Changelog containing an overview of all new updates, features, and hotfixes for Continia Banking [Year] [Release]
 date: DD-MM-YYYY
+description: Changelog containing an overview of all new updates, features, and hotfixes for Continia Banking [Year] [Release]
 id: CB-[number]
 lang: en
----
+```
 
 # Detailed changelog for Continia Banking [Year] [Release]
 
@@ -425,6 +464,7 @@ PartnerZone (only available to partners).
 
 [Repeat pattern for each SP/hotfix...]
 ```
+````
 
 **Key rules for changelogs:**
 - Release dates use "Month Day, Year" format (e.g., "March 16, 2026") - NOT the DD-MM-YYYY frontmatter format
@@ -442,14 +482,14 @@ PartnerZone (only available to partners).
 
 **Template:**
 
-```markdown
----
+````markdown
+```meta
 title: [Topic] FAQ
-description: Find answers to frequently asked questions about [topic].
 date: DD-MM-YYYY
+description: Find answers to frequently asked questions about [topic].
 id: CB-[number]
 lang: en
----
+```
 
 # [Topic] FAQ
 
@@ -467,6 +507,7 @@ lang: en
 2. [Step 2]
 3. [Step 3]
 ```
+````
 
 **Key rules for FAQs:**
 - Each question is an H2 heading

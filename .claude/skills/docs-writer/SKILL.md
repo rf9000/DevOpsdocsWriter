@@ -51,16 +51,18 @@ See `references/style-guide.md` for complete templates, formatting rules, and ve
 - **No contractions** - use "cannot" not "can't", "do not" not "don't"
 - **Benefit-focused introductions** - explain what the user can achieve, not just what exists
 
-### Frontmatter (every article)
-```yaml
----
+### Metadata block (every article)
+````
+```meta
 title: [Descriptive title]
-description: [1-2 sentence summary]
 date: DD-MM-YYYY
+description: [1-2 sentence summary]
 id: CB-[number]
 lang: en
----
 ```
+````
+- Use the ` ```meta ` fence (GitBook format), **not** `--- ... ---`. Non-negotiable for new content. Older articles still use `---` (mid-migration); write new articles with ` ```meta ` regardless of what a sibling shows — copying a sibling's legacy `---` block is a defect.
+- Field order: title, date, description, id, lang
 - Date format is DD-MM-YYYY (European)
 - Ask the user for the CB-ID number if not provided
 
@@ -123,7 +125,7 @@ FolderName | Display Name
 
 Before presenting any documentation:
 
-- [ ] YAML frontmatter with all 5 fields (title, description, date, id, lang)
+- [ ] ` ```meta ` block with all 5 fields (title, date, description, id, lang)
 - [ ] Single H1 matching the title
 - [ ] Procedure headings use "To [verb]" format
 - [ ] UI elements are **bold**, statuses are *italic*
@@ -133,4 +135,5 @@ Before presenting any documentation:
 - [ ] Related information section at the end
 - [ ] No contractions
 - [ ] Active voice throughout
-- [ ] Introductions frame the business value/context first
+- [ ] Introductions frame the business value/context first — but only when it is sourced (from the brief/work item); no invented "why" or before/after
+- [ ] Article length is proportional to the change (a minor change is one tight section, not a padded multi-section piece); no filler explainer sections or hints

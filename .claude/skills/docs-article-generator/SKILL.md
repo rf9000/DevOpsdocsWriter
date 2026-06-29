@@ -44,21 +44,48 @@ applied by `docs-writer` during drafting.
    `swagger-api-reader`) for domain context. The result is the end-to-end journey:
    prerequisites → setup/fields → actions → results → related features.
 
-3. **Classify the change.** Per `references/code-to-docs.md` section 4, decide: doc-worthy
-   feature (draft an article — the default), pure bug fix (recommend a changelog entry, do not
-   invent an article), or enhancement to an existing article (recommend an edit). State the
-   classification and reasoning to the user.
+3. **Assess magnitude and impact, then classify → choose the output.**
+   First, size the change and gather impact, because both shape what you produce:
+   - **Magnitude (`references/code-to-docs.md` section 3).** Decide whether this is a *minor
+     tweak*, a *workflow improvement*, a *new feature/module*, or a *technical addition*. The
+     magnitude caps the output depth — a couple of new fields is not a full multi-section
+     article, and it tilts the new-vs-update call toward a delta update.
+   - **Impact brief (`references/code-to-docs.md` section 4).** Answer the seven questions
+     (problem solved, before vs. now, when noticed, where in the UI, config needed, etc.) from
+     the work item, comments, PR, and code. Confirmed answers frame the intro; answers you
+     cannot ground in any source are **not invented** — they become *Context needed from
+     author/SME* gaps in the work-item comment.
+
+   Then, per `references/code-to-docs.md` section 6, decide exactly one of three outputs:
+   - **New article** (the default for substantial changes) — a doc-worthy feature with no existing
+     article, an *uncertain* match, or a genuinely new sub-topic. Scale its depth to the magnitude.
+   - **Delta update** — a CONFIDENT match to an existing article that this change extends, **or** a
+     minor change with a plausible existing home (§6 "Magnitude tilts the call"). Produce an update
+     note targeting that article's existing `CB-###` instead of a near-duplicate (§6 gives the
+     confident-vs-uncertain criteria and the delta-note format).
+   - **Changelog entry** — a pure bug fix / internal refactor with no user-visible change.
+   Match on shared UI captions / the same page or setup object, not title wording. In an
+   unattended run, state the classification in the work-item comment (and add a "may overlap
+   CB-### — consider merging" note when you fell back to a new article from an uncertain match);
+   interactively, state it to the user.
 
 4. **Choose the article type and location.** Use the "Choosing the article type" guide and the
    change-type heuristics. Pick the target folder, read 2-3 sibling articles for tone, and
    locate the folder's `toc.txt`.
 
-5. **Get the article id.** Ask the user for the unique `CB-###` id (required). Optionally grep
-   the docs set to confirm it is unused.
+5. **Get the article id.** For a **new article**, take the next unused `CB-###` (in an unattended
+   run, the highest existing `CB-` number in the docs set + 1; interactively, ask the user). For a
+   **delta update**, reuse the existing article's `CB-###` — do not mint a new one. Optionally grep
+   the docs set to confirm a new id is unused.
 
 6. **Draft via `docs-writer`.** Do not re-derive house style here — `docs-writer` is the single
    drafting engine. Invoke it with a *feature brief* assembled from the previous steps:
    - the chosen article type and target folder (+ the 2-3 sibling articles read for tone),
+   - the **magnitude and depth budget** (§3) so the writer scales the article and does not pad a
+     small change into a multi-section piece,
+   - the **confirmed impact answers** (§4) so the intro frames problem/when-useful from sourced
+     facts — and an explicit note of which impact answers are unknown, so the writer does **not**
+     invent them,
    - the `CB-###` id,
    - the reconstructed feature flow (prerequisites → setup/fields → actions → results → related),
    - the caption→UI-name mapping from `references/code-to-docs.md` so it bolds real captions and
@@ -66,10 +93,13 @@ applied by `docs-writer` during drafting.
    - candidate `@CB-###` cross-links and any legitimate external links.
    `docs-writer` produces the article file in its own style.
 
-7. **Validate.** Run the `docs-validator` skill on the new file — it runs the format lint, the
-   AC01 caption accuracy check (passing this AL repo as `--al-root`), and the judgment pass. Fix
-   every BLOCKING finding, resolve any AC01 VERIFY items (confirm each flagged term is real UI or
-   correct the article), and address WARNINGs where appropriate; then re-validate.
+7. **Validate.** For a **new article**, run the `docs-validator` skill on the new file — it runs
+   the format lint, the AC01 caption accuracy check (passing this AL repo as `--al-root`), and the
+   judgment pass. Fix every BLOCKING finding, resolve any AC01 VERIFY items (confirm each flagged
+   term is real UI or correct the article), and address WARNINGs where appropriate; then
+   re-validate. For a **delta update** or **changelog entry**, skip the article-structure
+   validation (it is not a standalone publishable page) — but still confirm every bold UI term
+   traces to a real AL caption (run the AC01 caption check or verify by hand).
 
 8. **Present.** Show the created file path, the exact `toc.txt` line to add (and its position),
    any external links used (with rationale), and the validator verdict. Flag anything that needs

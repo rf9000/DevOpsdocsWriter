@@ -7,9 +7,11 @@ the generator's *delta* — it does not repeat house style (that lives in
 ## Table of contents
 - [1. Reconstruct the complete feature flow (LSP-first)](#1-reconstruct-the-complete-feature-flow-lsp-first)
 - [2. Map AL symbols to user-facing text](#2-map-al-symbols-to-user-facing-text)
-- [3. Change-type → article-type heuristics](#3-change-type--article-type-heuristics)
-- [4. Decide: article vs changelog vs nothing](#4-decide-article-vs-changelog-vs-nothing)
-- [5. File placement and toc.txt](#5-file-placement-and-toctxt)
+- [3. Change magnitude → output depth (proportionality)](#3-change-magnitude--output-depth-proportionality)
+- [4. Impact brief — the seven questions](#4-impact-brief--the-seven-questions)
+- [5. Change-type → article-type heuristics](#5-change-type--article-type-heuristics)
+- [6. Decide the output: new article, delta update, or changelog](#6-decide-the-output-new-article-delta-update-or-changelog)
+- [7. File placement and toc.txt](#7-file-placement-and-toctxt)
 
 ---
 
@@ -67,7 +69,54 @@ Rules:
   written as `* **Field Name** - [what to enter and why].`
 - Page-open steps use the page caption: `Search ({{search}}) for and select **[Caption]**.`
 
-## 3. Change-type → article-type heuristics
+## 3. Change magnitude → output depth (proportionality)
+
+The size of the *output* must match the size of the *change*. A two-field addition does not earn
+a full multi-section How-to with a priority-hierarchy explainer, reference tables, and several
+hints — padding a small change into a big article produces text that "sounds fine without really
+saying much." Before choosing the article type, assess the change **magnitude** and let it cap
+the depth.
+
+| Magnitude | What it looks like | Default output | Depth budget |
+|-----------|--------------------|----------------|--------------|
+| **Minor tweak** | A couple of new fields, a new toggle/option, a renamed action, a small behavior change on an existing page | **Prefer a delta update** to the existing article (see §6). If a new article is genuinely warranted (no existing home), keep it to **one tight section** — intro + a single `## To ...` procedure. | 1 procedure, ≤1 hint, no explainer/hierarchy sections, no reference tables unless the field list itself needs one |
+| **Workflow improvement** | A changed or extended user workflow on an already-documented feature (new step, new branch, new action that changes how the task is done) | Delta update if it extends a documented flow; otherwise a focused article centered on the changed flow | The changed flow only — do not re-document the whole surrounding feature |
+| **New feature / module** | A genuinely new capability, setup page, wizard, or module area with no existing article | Full article (today's default), optionally split into Conceptual + How-to per §5 | Full structure as the feature warrants |
+| **Technical addition** | Dev-facing change with no user-visible UI (API, event, refactor) | Changelog entry or a short developer note — not a user article | Minimal; see §6 `changelog` |
+
+Rule of thumb: **the number of sections should track the number of things the user actually has
+to understand or do.** When in doubt, write less and flag the gap (§4) rather than inventing
+scaffolding to fill an article.
+
+## 4. Impact brief — the seven questions
+
+The AL code tells you **what** the feature does and **where** it appears. It does **not** tell you
+**why** it matters or **when** it is useful — that lives in the developer's head, the work item,
+and the PR. Before drafting, answer these seven questions from the work item description,
+comments, linked PRs, and the code:
+
+1. **What type of change is this?** (new functionality / workflow improvement / minor tweak /
+   technical addition) — this drives the magnitude call in §3.
+2. **What problem does this solve?**
+3. **What can the user do now that they could not before?**
+4. **When will the user notice this change?** (a concrete scenario)
+5. **What did the system do before vs. now?**
+6. **Where does this appear in the UI?** (page/field/action captions — from the code)
+7. **Is this something users need to configure?**
+
+How to use the answers:
+
+- **Confirmed answers feed the work.** Q1 sets the magnitude; Q6 comes from the captions you
+  mapped in §2; Q2/Q3/Q4/Q5/Q7, *where sourced from the work item or PR*, frame the article's
+  intro (problem first, then capability) and decide whether a configuration procedure is needed.
+- **Do not invent impact.** If an answer is not grounded in the work item, comments, PR, or code,
+  **do not manufacture a plausible "why."** Leave it out of the article and surface it as a gap
+  in the work-item comment under **Context needed from author/SME** (the unattended prompt
+  defines this block). Unknown impact is a question for a human, never filler.
+- A *minor* magnitude with weak Q2–Q5 answers is a strong signal for a delta update or a very
+  short article — not a padded one.
+
+## 5. Change-type → article-type heuristics
 
 | Code change | Likely article type | Notes |
 |-------------|---------------------|-------|
@@ -77,28 +126,88 @@ Rules:
 | New bank auth codeunit / bank enablement | **Bank onboarding** | Requirements + credential table + `## To establish...` |
 | New enum statuses / state machine change | Update **Conceptual** status table | Render values *italic* |
 | New action on an existing page | Update the existing How-to article | Usually an edit, not a new file |
-| Pure bug fix, no user-visible change | **Changelog entry** | See section 4 — do not invent an article |
+| Pure bug fix, no user-visible change | **Changelog entry** | See section 6 — do not invent an article |
 
 A substantial feature often needs a Conceptual article *and* one or more Setup/How-to articles
 linked from an Overview. Prefer splitting over a single mixed page.
 
-## 4. Decide: article vs changelog vs nothing
+## 6. Decide the output: new article, delta update, or changelog
 
-Before drafting, classify the change honestly:
+Before drafting, classify the change honestly. The output is exactly one of three kinds —
+`newfeature`, `update`, or `changelog`:
 
-- **Doc-worthy feature/behavior** (new capability, new setup, changed user workflow) → draft a
-  complete new article (the default output of this skill).
-- **Pure bug fix / internal refactor** with no user-visible change → there is nothing to
-  document as an article. Say so explicitly and recommend a **changelog entry** instead
-  (Functional Area + business-focused description + 5-digit work-item ID, per the changelog
-  template in the style guide). Do not pad an article to justify the skill.
-- **Enhancement to an existing documented feature** → recommend editing the existing article
-  (find it via the docs set) rather than creating a near-duplicate new file; only create a new
-  file if the enhancement is genuinely a new sub-topic.
+- **`newfeature`** — a doc-worthy feature/behavior (new capability, new setup, changed user
+  workflow) with **no existing article**, an **uncertain** match, or a genuinely new sub-topic →
+  draft a complete new article (the default). Take the next unused `CB-###`. Scale its depth to
+  the magnitude (§3): a *minor* change that still has no existing home is a one-section article,
+  not a full multi-section build-up.
+- **`update`** — an enhancement to an **already-documented** feature, where you have a
+  **confident** match (see criteria below) → produce a **delta update note** targeting the
+  existing article's `CB-###`, instead of a near-duplicate new file. Do **not** mint a new id.
+- **`changelog`** — a pure bug fix / internal refactor with **no user-visible change** → there is
+  nothing to document as an article. Recommend a **changelog entry** instead (Functional Area +
+  business-focused description + 5-digit work-item ID, per the changelog template in the style
+  guide). Do not pad an article to justify the skill.
 
-State the classification and reasoning to the user before producing the file.
+### Finding the existing article (match on captions, not titles)
 
-## 5. File placement and toc.txt
+Reconstruct the feature's user-facing UI captions from the changed AL objects (section 2), then
+search the docs set for an article that documents that same surface. Anchor the match on **shared
+UI captions / the same page or setup object** — e.g. the article documents the exact page caption
+or setup page your changed AL objects belong to — **not** on title-word similarity.
+
+| Signal | Confidence |
+|--------|-----------|
+| One article documents the same page/setup object and the bold captions your change touches | **Confident** → `update` |
+| The change extends what that one article already covers (new action on a documented page, new field on a documented setup page, new status in a documented state table) | **Confident** → `update` |
+| Several candidate articles could plausibly own it, none clearly | **Uncertain** → `newfeature`, flag overlap |
+| An article only mentions the area tangentially / in passing | **Uncertain** → `newfeature`, flag overlap |
+| The match rests on title wording rather than shared captions/objects | **Uncertain** → `newfeature`, flag overlap |
+| The change is a confident match's feature *area* but a genuinely new sub-topic | `newfeature` (new file), cross-link the existing article |
+
+**Magnitude tilts the call.** Small changes rarely deserve a brand-new article. When the
+magnitude (§3) is a **minor tweak** *and* a plausible existing article documents the same
+page/setup object, lean to `update` even on a **moderately-confident** match — a delta note
+against the existing article beats a near-empty new file. The default in the table above
+("uncertain → new article") is calibrated for *substantial* changes; for a minor change, invert
+it. Reserve a new article for a minor change only when there is genuinely no existing home for it.
+
+When you fall back to `newfeature` from an **uncertain** match, name the most likely existing
+article so a human can decide: add `may overlap CB-### — consider merging instead` to the
+work-item comment.
+
+### Delta update note format
+
+A delta note is **not** a standalone article — it has no `meta` frontmatter, no single H1, no id
+of its own, and is **not** run through the article-structure validation. It tells the writer
+exactly what to change in the existing article, in house style, so fragments paste straight in.
+Still obey "code wins": every bold UI term must trace to a real AL caption.
+
+```
+# Update to CB-142 — Payment approval
+Target file: en-us\Continia Banking\Payments\Approving payments.md
+
+## What changed
+<1-2 sentences: the new/changed capability, in user terms>
+
+## Suggested edits
+- **Add** after the "Approve a single payment" section:
+  ### Approve several payments at once
+  <house-style prose for the new section — real bold captions, italic statuses>
+- **Update** the "<existing section>" section: <what to add/revise and why>
+- **New UI elements:** **Approve selected** (action), **Selected Count** (field)
+- **New steps:**
+  1. <step>
+  2. <step>
+
+## Points to verify before publishing
+- <any inferred behavior / unverified caption / scope gap>
+```
+
+State the classification and reasoning (in the work-item comment for unattended runs) before
+producing the file.
+
+## 7. File placement and toc.txt
 
 - Mirror the docs site structure under
   `C:\GeneralDev\continia.docs.articles\en-us\Continia Banking\`. Place the file in the folder
