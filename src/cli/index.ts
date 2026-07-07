@@ -4,7 +4,7 @@ import { loadConfig } from '../config/index.ts';
 import { startWatcher, runPollCycle } from '../services/watcher.ts';
 import { StateStore } from '../state/state-store.ts';
 import { queryTaggedWorkItems } from '../sdk/azure-devops-client.ts';
-import { processDocsItem } from '../services/processor.ts';
+import { processDocsItem, classifyItem } from '../services/processor.ts';
 
 const HELP = `
 docsWriter — auto-generate Azure DevOps documentation articles from tagged work items
@@ -16,6 +16,7 @@ Commands:
   watch            Start the long-running watcher (polls every N minutes)
   run-once         Run a single poll cycle and exit
   test-item <id>   Generate docs for a single work item (dry-run, no ADO writes)
+  classify-item <id>  Run only the classifier for a work item (prints the JSON decision)
   debug-tags       List work items currently carrying the write-docs tag
   reset-state      Clear the processed-item state and exit
   help             Show this help message
@@ -78,6 +79,26 @@ switch (command) {
     } else {
       console.log(`\nDone: failed${result.error ? ` (${result.error})` : ''}`);
     }
+    break;
+  }
+
+  case 'classify-item': {
+    const itemIdArg = process.argv[3];
+    if (!itemIdArg || isNaN(Number(itemIdArg))) {
+      console.error('Usage: docswriter classify-item <work-item-id>');
+      process.exitCode = 1;
+      break;
+    }
+    const config = loadConfig();
+    config.dryRun = true;
+    console.log(`Classifying work item #${itemIdArg} (no article is drafted, no ADO writes)\n`);
+    const result = await classifyItem(config, Number(itemIdArg));
+    if ('productIssue' in result) {
+      console.log(`Failed: ${result.productIssue}`);
+      process.exitCode = 1;
+      break;
+    }
+    console.log(JSON.stringify(result.classification, null, 2));
     break;
   }
 

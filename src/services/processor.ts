@@ -4,6 +4,7 @@ import { join, resolve } from 'path';
 import type {
   AppConfig,
   DocsProcessResult,
+  OutputKind,
   PrContext,
   PullRequestRef,
   WorkItemComment,
@@ -15,6 +16,8 @@ import type { DiscoveredSkill } from './skill-loader.ts';
 import * as sdk from '../sdk/azure-devops-client.ts';
 import * as gen from './generator.ts';
 import * as linker from './skill-linker.ts';
+import * as classifier from './classifier.ts';
+import type { ClassifierContext, DocsClassification } from './classifier.ts';
 import { discoverSkills } from './skill-loader.ts';
 import { markdownToHtml, stripHtmlToText } from '../utils/html.ts';
 import { resolveProduct } from '../config/products.ts';
@@ -29,6 +32,7 @@ export interface ProcessorDeps {
   createSkillJunctions: (targetRepoPath: string, skillsSourceDir: string) => string[];
   removeSkillJunctions: (created: string[]) => void;
   generateDocs: (config: AppConfig, context: DocsContext) => Promise<string>;
+  classifyDocs: (config: AppConfig, context: ClassifierContext) => Promise<DocsClassification>;
   uploadAttachment: (
     config: AppConfig,
     fileName: string,
@@ -53,6 +57,7 @@ const defaultDeps: ProcessorDeps = {
   createSkillJunctions: linker.createSkillJunctions,
   removeSkillJunctions: linker.removeSkillJunctions,
   generateDocs: gen.generateDocs,
+  classifyDocs: classifier.classifyDocsChange,
   uploadAttachment: sdk.uploadAttachment,
   linkAttachmentToWorkItem: sdk.linkAttachmentToWorkItem,
   addWorkItemComment: sdk.addWorkItemComment,
@@ -71,8 +76,7 @@ const ARTICLE_BLOCK_RE = /<<<ARTICLE>>>\s*([\s\S]*?)\s*<<<END-ARTICLE>>>/;
 const OUTPUT_KIND_BLOCK_RE =
   /<<<DOCS-OUTPUT-KIND>>>\s*([\s\S]*?)\s*<<<END-DOCS-OUTPUT-KIND>>>/;
 
-/** The three kinds of deliverable the agent can produce (see code-to-docs.md §6). */
-export type OutputKind = 'newfeature' | 'update' | 'changelog';
+export type { OutputKind } from '../types/index.ts';
 
 export interface OutputClassification {
   kind: OutputKind;
@@ -86,6 +90,8 @@ export interface OutputClassification {
  * deliverable can be named and framed accordingly. Defaults to `newfeature` when
  * the marker is absent — that is the historical always-new-article behavior, so
  * older agent output stays backward compatible.
+ * The classifier phase is the naming authority; this marker is kept as a
+ * consistency check on the drafter.
  */
 export function extractOutputKind(agentMessage: string): OutputClassification {
   const block = OUTPUT_KIND_BLOCK_RE.exec(agentMessage)?.[1];
@@ -152,6 +158,22 @@ export function extractCommentBody(agentMessage: string): string {
 }
 
 /**
+ * Render the classifier's candidate articles as a Markdown addendum for the
+ * work-item comment. Built in code (not by the agent) so the honesty note is
+ * guaranteed present: for a new article, the human sees which existing
+ * articles were considered; for an update, which runner-ups also relate.
+ */
+export function candidateNote(c: DocsClassification): string {
+  if (c.candidates.length === 0) return '';
+  const list = c.candidates
+    .map((x) => `- ${x.id}${x.file ? ` (\`${x.file}\`)` : ''}${x.reason ? ` — ${x.reason}` : ''}`)
+    .join('\n');
+  return c.kind === 'newfeature'
+    ? `\n\n**Possible existing homes** — a new article was written, but these articles may be candidates for updating instead:\n${list}`
+    : `\n\n**Also relates to**\n${list}`;
+}
+
+/**
  * Resolve which product a work item belongs to and everything that hangs off
  * that: the product's docs folder (the ONLY folder the agent may search for
  * existing/related articles), its article-id prefix, and its AL source repo.
@@ -194,6 +216,91 @@ export function resolveItemProduct(
   return { product, docsSearchPath, targetRepoPath };
 }
 
+export interface GatheredItem {
+  workItem: WorkItemResponse;
+  itemTitle: string;
+  itemType: string;
+  itemDescription: string;
+  comments: string[];
+  pullRequests: PrContext[];
+  product: ProductInfo;
+  docsSearchPath: string;
+  targetRepoPath: string;
+}
+
+/**
+ * Fetch the work item, resolve its product, and gather comments + linked PR
+ * context — the shared front half of both classification and full processing.
+ */
+export async function gatherItemContext(
+  config: AppConfig,
+  itemId: number,
+  deps: ProcessorDeps = defaultDeps,
+): Promise<GatheredItem | { productIssue: string }> {
+  const workItem = await deps.getWorkItem(config, itemId);
+  const itemTitle = String(workItem.fields['System.Title'] ?? '');
+  const itemType = String(workItem.fields['System.WorkItemType'] ?? '');
+  const itemDescription = stripHtmlToText(
+    String(workItem.fields['System.Description'] ?? ''),
+  );
+  log(`  #${itemId}: "${itemTitle}" (${itemType})`);
+
+  const resolution = resolveItemProduct(config, workItem);
+  if ('productIssue' in resolution) return resolution;
+  const { product, docsSearchPath, targetRepoPath } = resolution;
+  log(`  #${itemId}: Product: ${product.docsFolder} (${product.prefix}) — docs scope: ${docsSearchPath}`);
+
+  const rawComments = await deps.getWorkItemComments(config, itemId);
+  const comments = rawComments
+    .map((c) => stripHtmlToText(String(c.text ?? '')))
+    .filter((c) => c.length > 0);
+  if (comments.length > 0) log(`  #${itemId}: ${comments.length} comment(s)`);
+
+  const prRefs = deps.parsePullRequestRefs(workItem);
+  const pullRequests: PrContext[] = [];
+  for (const ref of prRefs) {
+    try {
+      pullRequests.push(await deps.getPullRequestContext(config, ref));
+    } catch (err) {
+      log(`  #${itemId}: Skipping PR #${ref.pullRequestId} — ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (pullRequests.length > 0) log(`  #${itemId}: ${pullRequests.length} linked PR(s)`);
+
+  return { workItem, itemTitle, itemType, itemDescription, comments, pullRequests, product, docsSearchPath, targetRepoPath };
+}
+
+/**
+ * Classification-only entry point (the `classify-item` CLI command): gather
+ * the work item context and run just the classifier — no junctions, no
+ * drafting, no ADO writes. Cheap enough to replay repeatedly when tuning the
+ * classification rules against known work items.
+ */
+export async function classifyItem(
+  config: AppConfig,
+  itemId: number,
+  deps: ProcessorDeps = defaultDeps,
+): Promise<{ classification: DocsClassification } | { productIssue: string }> {
+  const gathered = await gatherItemContext(config, itemId, deps);
+  if ('productIssue' in gathered) return gathered;
+  const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsSearchPath, targetRepoPath } = gathered;
+  const classification = await deps.classifyDocs(
+    { ...config, targetRepoPath },
+    {
+      itemId,
+      itemTitle,
+      itemType,
+      itemDescription,
+      comments,
+      pullRequests,
+      docsRepoPath: docsSearchPath,
+      productName: product.docsFolder,
+      idPrefix: product.prefix,
+    },
+  );
+  return { classification };
+}
+
 export async function processDocsItem(
   config: AppConfig,
   itemId: number,
@@ -202,49 +309,40 @@ export async function processDocsItem(
   log(`Processing work item #${itemId}...`);
 
   try {
-    const workItem = await deps.getWorkItem(config, itemId);
-    const itemTitle = String(workItem.fields['System.Title'] ?? '');
-    const itemType = String(workItem.fields['System.WorkItemType'] ?? '');
-    const itemDescription = stripHtmlToText(
-      String(workItem.fields['System.Description'] ?? ''),
-    );
-    log(`  #${itemId}: "${itemTitle}" (${itemType})`);
-
-    // Resolve the product first — it decides the AL repo, the docs folder the
-    // agent may search, and the article-id prefix. Fail fast (before any agent
-    // tokens are spent) when it cannot be resolved.
-    const resolution = resolveItemProduct(config, workItem);
-    if ('productIssue' in resolution) {
-      log(`  #${itemId}: Product unresolved — ${resolution.productIssue}`);
+    const gathered = await gatherItemContext(config, itemId, deps);
+    if ('productIssue' in gathered) {
+      log(`  #${itemId}: Product unresolved — ${gathered.productIssue}`);
       return {
         itemId,
         documented: false,
-        error: resolution.productIssue,
-        productIssue: resolution.productIssue,
+        error: gathered.productIssue,
+        productIssue: gathered.productIssue,
       };
     }
-    const { product, docsSearchPath, targetRepoPath } = resolution;
-    log(`  #${itemId}: Product: ${product.docsFolder} (${product.prefix}) — docs scope: ${docsSearchPath}`);
+    const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsSearchPath, targetRepoPath } = gathered;
     const effectiveConfig: AppConfig = { ...config, targetRepoPath };
 
-    // Comments
-    const rawComments = await deps.getWorkItemComments(config, itemId);
-    const comments = rawComments
-      .map((c) => stripHtmlToText(String(c.text ?? '')))
-      .filter((c) => c.length > 0);
-    if (comments.length > 0) log(`  #${itemId}: ${comments.length} comment(s)`);
-
-    // Linked pull requests
-    const prRefs = deps.parsePullRequestRefs(workItem);
-    const pullRequests: PrContext[] = [];
-    for (const ref of prRefs) {
-      try {
-        pullRequests.push(await deps.getPullRequestContext(config, ref));
-      } catch (err) {
-        log(`  #${itemId}: Skipping PR #${ref.pullRequestId} — ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-    if (pullRequests.length > 0) log(`  #${itemId}: ${pullRequests.length} linked PR(s)`);
+    // Non-optional classifier phase: decide new-vs-update-vs-changelog BEFORE
+    // any drafting tokens are spent. A classifier failure fails the item
+    // (tag kept → retried later); we never draft on a guessed kind.
+    log(`  #${itemId}: Classifying (new article vs update vs changelog)...`);
+    const classification = await deps.classifyDocs(effectiveConfig, {
+      itemId,
+      itemTitle,
+      itemType,
+      itemDescription,
+      comments,
+      pullRequests,
+      docsRepoPath: docsSearchPath,
+      productName: product.docsFolder,
+      idPrefix: product.prefix,
+    });
+    log(
+      `  #${itemId}: Classifier: ${classification.kind}` +
+        `${classification.target ? ` → ${classification.target}` : ''}` +
+        `${classification.candidates.length ? ` | candidates: ${classification.candidates.map((c) => c.id).join(', ')}` : ''}` +
+        `${classification.reasoning ? `\n  #${itemId}: Classifier reasoning: ${classification.reasoning}` : ''}`,
+    );
 
     // Skills (for the prompt listing) + junction them into the source repo
     const discovered = deps.discoverSkills(resolve(config.skillsSourceDir));
@@ -269,6 +367,7 @@ export async function processDocsItem(
       docsRepoPath: docsSearchPath,
       productName: product.docsFolder,
       idPrefix: product.prefix,
+      classification,
     };
 
     let summary: string;
@@ -309,12 +408,25 @@ export async function processDocsItem(
       }
     }
 
-    // The agent writes to a fixed path; its classification marker decides the
-    // final, self-identifying deliverable name (new article / delta update /
-    // changelog). Rename so the on-disk file, the attachment, and articlePath
-    // all carry the kind.
-    const classification = extractOutputKind(summary);
-    const deliverableName = deliverableFileName(itemId, classification);
+    // The agent writes to a fixed path; rename it to a self-identifying
+    // deliverable name (new article / delta update / changelog) so the
+    // on-disk file, the attachment, and articlePath all carry the kind.
+    // The classifier's decision names the deliverable; the drafter's marker is
+    // only a consistency check (it may not override the upstream decision).
+    const drafterView = extractOutputKind(summary);
+    if (
+      drafterView.kind !== classification.kind ||
+      (classification.kind === 'update' && drafterView.target !== classification.target)
+    ) {
+      log(
+        `  #${itemId}: WARNING — drafter marker (${drafterView.kind}${drafterView.target ? ` ${drafterView.target}` : ''}) ` +
+          `disagrees with classifier (${classification.kind}${classification.target ? ` ${classification.target}` : ''}); classifier wins.`,
+      );
+    }
+    const deliverableName = deliverableFileName(itemId, {
+      kind: classification.kind,
+      target: classification.target,
+    });
     const deliverablePath = join(outputDir, deliverableName);
     if (deliverablePath !== outputPath) {
       renameSync(outputPath, deliverablePath);
@@ -324,7 +436,7 @@ export async function processDocsItem(
         `${classification.target ? ` (${classification.target})` : ''} → ${deliverableName}`,
     );
 
-    const commentBody = extractCommentBody(summary);
+    const commentBody = extractCommentBody(summary) + candidateNote(classification);
 
     if (config.dryRun) {
       const summaryPath = join(outputDir, `workitem-${itemId}-summary.md`);

@@ -102,3 +102,6 @@ export interface DocsProcessResult {
    */
   productIssue?: string;
 }
+
+/** The three kinds of deliverable the pipeline can produce (see code-to-docs.md §6). */
+export type OutputKind = 'newfeature' | 'update' | 'changelog';

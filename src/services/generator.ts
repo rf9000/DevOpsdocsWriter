@@ -4,6 +4,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { AppConfig, PrContext } from '../types/index.ts';
 import type { DiscoveredSkill } from './skill-loader.ts';
+import type { DocsClassification } from './classifier.ts';
 
 const DENIED_BASH_PATTERNS = [
   /\bgit\s+(push|commit|merge|rebase|reset|checkout|branch\s+-[dD]|stash\s+drop|clean|tag\s+-d)/,
@@ -90,6 +91,8 @@ export interface DocsContext {
   productName: string;
   /** The product's article-id prefix, e.g. "CB". */
   idPrefix: string;
+  /** The upstream classifier's decision — the drafter must produce exactly this kind. */
+  classification: DocsClassification;
 }
 
 /**
@@ -255,11 +258,8 @@ export function buildSystemPrompt(
       `- This is an UNATTENDED run. NEVER ask the user a question or wait for input — make the best decision and proceed.\n` +
       `- This work item belongs to the product **${context.productName}** (article-id prefix \`${context.idPrefix}\`).\n` +
       `- The published docs set for ${context.productName} is at \`${context.docsRepoPath}\` — this is the product's own folder. Read it with Read/Grep/Glob to find existing articles, related articles, and the highest \`${context.idPrefix}-\` id. Search ONLY inside this folder; never scan other products' folders. It is READ-ONLY — never write into it.\n` +
-      `- **Size and frame before classifying.** First assess the change MAGNITUDE (minor tweak / workflow improvement / new feature / technical addition) and answer the IMPACT BRIEF (problem solved, what the user can now do, when noticed, before vs. now, where in the UI, config needed). See \`docs-article-generator\` → \`code-to-docs.md\` §3 (magnitude → depth) and §4 (impact brief). The magnitude caps how much you write — a couple of new fields is NOT a full multi-section article — and tilts the call toward an update. Keep the output PROPORTIONAL: section count should track what the user actually has to understand or do; never add explainer sections, reference tables, or extra hints to pad a small change.\n` +
-      `- **Classify.** Reconstruct the feature and its user-facing UI captions from the changed AL objects, then search the docs set for an existing article that already covers it — anchor the match on shared UI captions / the same page or setup object, NOT on title similarity. Then choose exactly one output (see \`code-to-docs.md\` §6):\n` +
-      `  - **update** — a CONFIDENT match exists AND this change extends what that article already covers, OR the change is a MINOR tweak with a plausible existing home (for a small change, prefer an update over a new file). New fields, columns, or actions on a page that an existing article documents are ALWAYS an update — even when several articles plausibly cover the area; that ambiguity decides only WHICH article to target (prefer the one documenting the page the new UI lives on, and name the runner-up in the work-item comment as "also relates to ${context.idPrefix}-###"), never the kind. Produce a DELTA NOTE targeting that article's existing \`${context.idPrefix}-###\`; do NOT mint a new id. The delta note is read by a human writer and MUST use the scaffold from \`code-to-docs.md\` §6: open with \`# Update to ${context.idPrefix}-### — <article title>\`, then a blockquote banner stating it is an update to an existing article (not a standalone page), then \`Target file:\` and \`Work item:\` lines, then \`## What changed\`, \`## Suggested edits\`, and \`## Points to verify before publishing\`. A delta note delivered as bare content without this scaffold is a FAILED output — proportionality caps the edits' content, never the scaffold.\n` +
-      `  - **changelog** — a pure bug fix / internal refactor with no user-visible change. Produce a changelog entry, not an article.\n` +
-      `  - **newfeature** — no match, OR an uncertain match on a SUBSTANTIAL change, OR a genuinely new sub-topic (a NEW page, setup object, or workflow that no article documents — NEVER new fields/columns/actions on a documented page; those are an update). Draft a new article scaled to the magnitude (a minor change with no existing home is ONE tight section, not a multi-section build-up) and AUTO-SELECT the next unused \`${context.idPrefix}-###\` (highest existing \`${context.idPrefix}-\` number + 1). When you fall back here from an UNCERTAIN match, name the most likely existing article in the work-item comment as "may overlap ${context.idPrefix}-### — consider merging instead".\n` +
+      `- **Size and frame before drafting.** First assess the change MAGNITUDE (minor tweak / workflow improvement / new feature / technical addition) and answer the IMPACT BRIEF (problem solved, what the user can now do, when noticed, before vs. now, where in the UI, config needed). See \`docs-article-generator\` → \`code-to-docs.md\` §3 (magnitude → depth) and §4 (impact brief). The magnitude caps how much you write — a couple of new fields is NOT a full multi-section article. Keep the output PROPORTIONAL: section count should track what the user actually has to understand or do; never add explainer sections, reference tables, or extra hints to pad a small change.\n` +
+      `${renderDecidedClassification(context)}\n` +
       `- **Impact is NOT in the code.** Why the feature matters, what problem it solves, when a user notices it, and what the system did before live in the work item / comments / PR. State impact in the article ONLY when sourced there — never manufacture a plausible "why" or before/after to enrich the intro (that is the filler to avoid). When impact is not sourced, keep the intro minimal and list the unanswered questions under "Context needed from author/SME" in the work-item comment.\n` +
       `- **Frontmatter:** a new article MUST open with a fenced \`\`\`meta\`\`\` block (GitBook format) in field order title, date, description, id, lang — NEVER a \`--- ... ---\` YAML block. Older sibling articles still using \`---\` are mid-migration; reading one for tone does NOT license copying its legacy frontmatter.\n` +
       `- You MUST use the \`Write\` tool to save the FINAL output to EXACTLY this absolute path: \`${context.outputPath}\`. The file is the deliverable; drafting it only in your message is a FAILED run. Do not end your turn until that file exists.\n` +
@@ -277,6 +277,43 @@ export function buildSystemPrompt(
   );
 
   return sections.join('\n\n');
+}
+
+/**
+ * Render the upstream classifier's decision as a non-negotiable instruction.
+ * The drafter never re-litigates new-vs-update — that decision was made by the
+ * dedicated classifier phase; the drafter only executes it (and may voice
+ * disagreement in the work-item comment).
+ */
+function renderDecidedClassification(context: DocsContext): string {
+  const c = context.classification;
+  const lines: string[] = [];
+  const disagree =
+    `If, while drafting, you find strong evidence this decision is wrong, still produce the decided kind and add one line to the work-item comment starting with "Classifier disagreement:" explaining why.`;
+  const marker = `Echo exactly this decision in the \`<<<DOCS-OUTPUT-KIND>>>\` marker.`;
+
+  if (c.kind === 'update') {
+    lines.push(
+      `- **Classification (already decided — do NOT re-classify).** An upstream classifier examined the changed AL objects and the docs set and decided: this run produces a DELTA UPDATE NOTE targeting the existing article **${c.target}**${c.targetFile ? ` (\`${c.targetFile}\`)` : ''}. Do not search for a different target and do not mint a new id. ${disagree} ${marker}`,
+      `- The delta note is read by a human writer and MUST use the scaffold from \`code-to-docs.md\` §6: open with \`# Update to ${c.target} — <article title>\`, then a blockquote banner stating it is an update to an existing article (not a standalone page), then \`Target file:\` and \`Work item:\` lines, then \`## What changed\`, \`## Suggested edits\`, and \`## Points to verify before publishing\`. A delta note delivered as bare content without this scaffold is a FAILED output — proportionality caps the edits' content, never the scaffold.`,
+    );
+  } else if (c.kind === 'changelog') {
+    lines.push(
+      `- **Classification (already decided — do NOT re-classify).** An upstream classifier decided: this run produces a CHANGELOG ENTRY (pure bug fix / internal refactor, no user-visible change) — not an article. Follow the changelog template in the style guide (Functional Area + business-focused description + 5-digit work-item ID). ${disagree} ${marker}`,
+    );
+  } else {
+    lines.push(
+      `- **Classification (already decided — do NOT re-classify).** An upstream classifier decided: this run produces a NEW ARTICLE. AUTO-SELECT the next unused \`${context.idPrefix}-###\` (highest existing \`${context.idPrefix}-\` number + 1) and scale the article depth to the change magnitude (a minor change is ONE tight section, not a multi-section build-up). ${disagree} ${marker}`,
+    );
+  }
+
+  if (c.candidates.length > 0) {
+    lines.push(
+      `- Related existing articles found by the classifier (for cross-links${c.kind === 'newfeature' ? '; the pipeline already tells the work item they may be merge candidates' : ''}): ${c.candidates.map((x) => `${x.id}${x.file ? ` (\`${x.file}\`)` : ''}`).join(', ')}.`,
+    );
+  }
+
+  return lines.join('\n');
 }
 
 export function buildUserPrompt(context: DocsContext): string {

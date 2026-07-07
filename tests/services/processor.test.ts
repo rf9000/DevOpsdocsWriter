@@ -5,6 +5,7 @@ import { tmpdir } from 'os';
 import type { AppConfig } from '../../src/types/index.ts';
 import {
   processDocsItem,
+  classifyItem,
   extractCommentBody,
   extractArticleBody,
   extractOutputKind,
@@ -43,6 +44,13 @@ function makeDeps(overrides: Partial<ProcessorDeps> = {}): ProcessorDeps {
     ),
     linkAttachmentToWorkItem: mock(() => Promise.resolve({})),
     addWorkItemComment: mock(() => Promise.resolve({})),
+    classifyDocs: mock(() =>
+      Promise.resolve({
+        kind: 'newfeature' as const,
+        candidates: [],
+        reasoning: 'test default',
+      }),
+    ),
     ...overrides,
   };
 }
@@ -65,7 +73,7 @@ describe('processDocsItem', () => {
     const result = await processDocsItem(config, 42, deps);
 
     expect(result.documented).toBe(true);
-    // No classification marker → defaults to a new-feature article.
+    // Default classifier mock → new-feature article.
     expect(result.articlePath).toContain('workitem-42-newfeature.md');
     expect(deps.createSkillJunctions).toHaveBeenCalledTimes(1);
     expect(deps.removeSkillJunctions).toHaveBeenCalledTimes(1);
@@ -237,6 +245,14 @@ describe('processDocsItem', () => {
     );
     const addWorkItemComment = mock(() => Promise.resolve({}));
     const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'update' as const,
+          target: 'CB-142',
+          candidates: [],
+          reasoning: 'documented page',
+        }),
+      ),
       generateDocs: mock((_cfg, ctx: DocsContext) => {
         writeFileSync(ctx.outputPath, '# Update to CB-142\n');
         return Promise.resolve(
@@ -382,6 +398,9 @@ describe('processDocsItem', () => {
     const config = cfg();
     const addWorkItemComment = mock(() => Promise.resolve({}));
     const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({ kind: 'changelog' as const, candidates: [], reasoning: 'bug fix' }),
+      ),
       generateDocs: mock((_cfg, ctx: DocsContext) => {
         writeFileSync(ctx.outputPath, 'Changelog: fixed a rounding bug.\n');
         return Promise.resolve(
@@ -396,6 +415,158 @@ describe('processDocsItem', () => {
     expect(result.articlePath).toContain('workitem-42-changelog.md');
     const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
     expect(comment).toContain('Changelog entry generated and attached:');
+  });
+
+  test('classifier decision drives the deliverable filename (drafter marker cannot override)', async () => {
+    const config = cfg();
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'update' as const,
+          target: 'CB-33',
+          targetFile: 'Reconciliation/Account identification methods.md',
+          candidates: [],
+          reasoning: 'documented page',
+        }),
+      ),
+      generateDocs: mock((_cfg, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, '# Update note\n');
+        // drafter marker disagrees — classifier must win
+        return Promise.resolve(
+          'done\n<<<DOCS-OUTPUT-KIND>>>\nkind: newfeature\n<<<END-DOCS-OUTPUT-KIND>>>',
+        );
+      }),
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(result.articlePath).toContain('workitem-42-update-CB-33.md');
+  });
+
+  test('passes the classification into the drafting context', async () => {
+    const config = cfg();
+    let seen: DocsContext | undefined;
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({ kind: 'changelog' as const, candidates: [], reasoning: 'bug fix' }),
+      ),
+      generateDocs: mock((_cfg, ctx: DocsContext) => {
+        seen = ctx;
+        writeFileSync(ctx.outputPath, 'entry\n');
+        return Promise.resolve('done');
+      }),
+    });
+
+    await processDocsItem(config, 42, deps);
+
+    expect(seen!.classification.kind).toBe('changelog');
+  });
+
+  test('classifier failure fails the item before any drafting or junctions', async () => {
+    const config = cfg();
+    const deps = makeDeps({
+      classifyDocs: mock(() => Promise.reject(new Error('no parseable block'))),
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(false);
+    expect(result.error).toContain('no parseable block');
+    expect(deps.createSkillJunctions).toHaveBeenCalledTimes(0);
+    expect(deps.generateDocs).toHaveBeenCalledTimes(0);
+  });
+
+  test('newfeature candidates are appended to the posted comment as merge suggestions', async () => {
+    const config = cfg();
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'newfeature' as const,
+          candidates: [
+            { id: 'CB-33', file: 'Reconciliation/Account identification methods.md', reason: 'documents the rules page' },
+            { id: 'CB-161', file: 'Using Templates in Banking Import.md', reason: 'documents templates' },
+          ],
+          reasoning: '',
+        }),
+      ),
+      addWorkItemComment,
+    });
+
+    await processDocsItem(config, 42, deps);
+
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('candidates for updating instead');
+    expect(comment).toContain('CB-33');
+    expect(comment).toContain('CB-161');
+  });
+
+  test('update runner-up candidates are posted as "also relates to"', async () => {
+    const config = cfg();
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'update' as const,
+          target: 'CB-33',
+          candidates: [{ id: 'CB-161', file: '', reason: 'templates concept' }],
+          reasoning: '',
+        }),
+      ),
+      addWorkItemComment,
+    });
+
+    await processDocsItem(config, 42, deps);
+
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('Also relates to');
+    expect(comment).toContain('CB-161');
+  });
+});
+
+describe('classifyItem', () => {
+  beforeEach(() => {
+    outDir = mkdtempSync(join(tmpdir(), 'clf-out-'));
+    docsDir = mkdtempSync(join(tmpdir(), 'clf-docs-'));
+    mkdirSync(join(docsDir, 'en-us', 'Continia Banking'), { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(outDir, { recursive: true, force: true });
+    rmSync(docsDir, { recursive: true, force: true });
+  });
+
+  test('classifies without drafting, junctions, or ADO writes', async () => {
+    const config = cfg();
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({ kind: 'update' as const, target: 'CB-33', candidates: [], reasoning: 'r' }),
+      ),
+    });
+
+    const result = await classifyItem(config, 42, deps);
+
+    expect('classification' in result && result.classification.target).toBe('CB-33');
+    expect(deps.generateDocs).toHaveBeenCalledTimes(0);
+    expect(deps.createSkillJunctions).toHaveBeenCalledTimes(0);
+    expect(deps.uploadAttachment).toHaveBeenCalledTimes(0);
+    expect(deps.addWorkItemComment).toHaveBeenCalledTimes(0);
+  });
+
+  test('returns productIssue for an unmapped area path', async () => {
+    const config = cfg();
+    const deps = makeDeps({
+      getWorkItem: mock(() =>
+        Promise.resolve(
+          mockWorkItem({ fields: { ...mockWorkItem().fields, 'System.AreaPath': 'Continia Software\\InHouse' } }),
+        ),
+      ),
+    });
+
+    const result = await classifyItem(config, 42, deps);
+
+    expect('productIssue' in result).toBe(true);
+    expect(deps.classifyDocs).toHaveBeenCalledTimes(0);
   });
 });
 

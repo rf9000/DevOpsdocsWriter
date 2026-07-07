@@ -17,9 +17,10 @@ docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-ge
 
 1. `watcher.ts` polls `queryTaggedWorkItems(writeDocsTag)`.
 2. `processor.ts` gathers context: `getWorkItem` (+relations) → `getWorkItemComments` → `parsePullRequestRefs` → `getPullRequestContext` (metadata + changed files).
-3. `skill-linker.ts` junctions `.claude/skills/*` into `{TARGET_REPO_PATH}/.claude/skills/` (removed in a `finally`).
-4. `generator.ts` runs the agent; it invokes `docs-article-generator`, auto-picks the next `CB-###`, and writes the article to `OUTPUT_DIR`. Writes are fenced to `OUTPUT_DIR` via `canUseTool`.
-5. `processor.ts` uploads the article as an attachment, links it, comments, and the watcher removes the tag.
+3. `classifier.ts` runs a read-only classifier agent (Read/Grep/Glob/LSP, cwd = the product's AL repo) that decides `newfeature`/`update`/`changelog` + the target article, returned as a structured `<<<CLASSIFICATION>>>` block. Non-optional: a classifier failure fails the item (tag kept → retried). The decision drives the drafting prompt, the deliverable filename, and a code-generated candidate-articles note in the work-item comment.
+4. `skill-linker.ts` junctions `.claude/skills/*` into `{TARGET_REPO_PATH}/.claude/skills/` (removed in a `finally`).
+5. `generator.ts` runs the agent; it invokes `docs-article-generator`, auto-picks the next `<PREFIX>-###`, and writes the article to `OUTPUT_DIR`. Writes are fenced to `OUTPUT_DIR` via `canUseTool`.
+6. `processor.ts` uploads the article as an attachment, links it, comments, and the watcher removes the tag.
 
 ## Key Patterns
 
@@ -38,12 +39,13 @@ docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-ge
 - `bun run once` — single poll cycle
 - `bun src/cli/index.ts debug-tags` — list tagged items
 - `bun src/cli/index.ts test-item <id>` — dry-run a single item
+- `bun src/cli/index.ts classify-item <id>` — classifier-only run for a work item (prints the JSON decision)
 
 ## File Layout
 
 - `src/config/` — Zod env validation
 - `src/sdk/` — Azure DevOps REST client (tags, comments, PRs, attachments)
-- `src/services/` — watcher, processor, generator (agent runner), skill-linker, skill-loader
+- `src/services/` — watcher, processor, classifier (classification-only agent), generator (agent runner), skill-linker, skill-loader
 - `src/prompts/` — `write-docs.md` system prompt
 - `src/state/` — JSON persistence + daily cap
 - `src/utils/` — HTML→text helper

@@ -22,6 +22,7 @@ function ctx(overrides: Partial<DocsContext> = {}): DocsContext {
     docsRepoPath: 'C:/repos/continia.docs.articles/en-us/Continia Banking',
     productName: 'Continia Banking',
     idPrefix: 'CB',
+    classification: { kind: 'newfeature' as const, candidates: [], reasoning: '' },
     ...overrides,
   };
 }
@@ -182,5 +183,71 @@ describe('makeCanUseTool', () => {
   test('allows non-write tools', async () => {
     expect((await gate('Read', { file_path: 'anything' })).behavior).toBe('allow');
     expect((await gate('Grep', {})).behavior).toBe('allow');
+  });
+});
+
+describe('buildSystemPrompt classification handoff', () => {
+  let dir: string;
+  let promptPath: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'gen-test-'));
+    promptPath = join(dir, 'write-docs.md');
+    writeFileSync(promptPath, 'BASE PROMPT');
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  test('renders a decided update with target and forbids re-classifying', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        classification: {
+          kind: 'update',
+          target: 'CB-33',
+          targetFile: 'Reconciliation/Account identification methods.md',
+          candidates: [
+            {
+              id: 'CB-161',
+              file: 'Using Templates in Banking Import.md',
+              reason: 'documents templates',
+            },
+          ],
+          reasoning: 'columns live on a documented page',
+        },
+      }),
+    );
+    expect(sys).toContain('already decided');
+    expect(sys).toContain('DELTA UPDATE NOTE');
+    expect(sys).toContain('CB-33');
+    expect(sys).toContain('Account identification methods.md');
+    expect(sys).toContain('do NOT re-classify');
+    // decision criteria are gone — the drafter is no longer asked to choose
+    expect(sys).not.toContain('Then choose exactly one output');
+  });
+
+  test('renders a decided newfeature with next-unused-id instruction', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        classification: { kind: 'newfeature', candidates: [], reasoning: '' },
+      }),
+    );
+    expect(sys).toContain('already decided');
+    expect(sys).toContain('NEW ARTICLE');
+    expect(sys).toContain('next unused');
+  });
+
+  test('renders a decided changelog', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        classification: { kind: 'changelog', candidates: [], reasoning: '' },
+      }),
+    );
+    expect(sys).toContain('already decided');
+    expect(sys).toContain('CHANGELOG ENTRY');
   });
 });

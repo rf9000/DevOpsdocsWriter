@@ -8,9 +8,10 @@ Built with Bun, TypeScript, Zod, and `@anthropic-ai/claude-agent-sdk`.
 
 1. **Poll** — every N minutes, find work items across the project tagged `write-docs`.
 2. **Gather context** — for each item, read its title/description, all comments, and any linked pull requests (PR metadata + changed-file paths).
-3. **Link skills** — junction-link docsWriter's docs-writing skills (`.claude/skills/`: `docs-article-generator`, `docs-writer`, `docs-validator`) into the source repo's `.claude/skills/` so the agent can invoke them via the `Skill` tool. Junctions need no admin on Windows and are removed after each run.
-4. **Generate** — run the Claude Agent SDK with the source repo as its working directory. The agent invokes `docs-article-generator`, reconstructs the feature flow from the AL code via LSP, auto-picks the next unused `CB-###`, writes the validated article to `OUTPUT_DIR`, and reports the validator verdict. Agent writes are fenced to `OUTPUT_DIR` — nothing is written into the source or docs repo.
-5. **Publish back** — upload the article as a `.md` attachment, link it to the work item, post a "docs attached" comment, and remove the `write-docs` tag.
+3. **Classify** — run a small, read-only agent (Read/Grep/Glob/LSP over the source repo) that decides whether the change is a new feature, an update to an existing article, or a changelog entry, and, for updates, which article. A classifier failure fails the item and keeps the tag so it's retried on a later poll; a successful decision drives the deliverable's filename and the drafting prompt below.
+4. **Link skills** — junction-link docsWriter's docs-writing skills (`.claude/skills/`: `docs-article-generator`, `docs-writer`, `docs-validator`) into the source repo's `.claude/skills/` so the agent can invoke them via the `Skill` tool. Junctions need no admin on Windows and are removed after each run.
+5. **Generate** — run the Claude Agent SDK with the source repo as its working directory. The agent invokes `docs-article-generator`, reconstructs the feature flow from the AL code via LSP, auto-picks the next unused `<PREFIX>-###`, writes the validated article to `OUTPUT_DIR`, and reports the validator verdict. Agent writes are fenced to `OUTPUT_DIR` — nothing is written into the source or docs repo.
+6. **Publish back** — upload the article as a `.md` attachment, link it to the work item, post a "docs attached" comment, and remove the `write-docs` tag.
 
 State (processed ids + a daily cap) is persisted as JSON to avoid runaway generation.
 
@@ -32,6 +33,7 @@ State (processed ids + a daily cap) is persisted as JSON to avoid runaway genera
 4. List tagged items and dry-run a single one:
    ```bash
    bun src/cli/index.ts debug-tags
+   bun src/cli/index.ts classify-item <work-item-id>  # classifier only: prints the JSON decision, no article
    bun src/cli/index.ts test-item <work-item-id>   # dry-run: writes the article to OUTPUT_DIR, no ADO writes
    ```
 5. Start the watcher:
@@ -47,12 +49,13 @@ See `.env.example`. Required: `AZURE_DEVOPS_PAT`/`ORG`/`PROJECT`, `TARGET_REPO_P
 
 ```
 src/
-├── cli/index.ts                 # CLI: watch, run-once, test-item, debug-tags, reset-state
+├── cli/index.ts                 # CLI: watch, run-once, test-item, classify-item, debug-tags, reset-state
 ├── config/index.ts              # Zod env validation
 ├── sdk/azure-devops-client.ts   # ADO REST client: tags, comments, PRs, attachments
 ├── services/
 │   ├── watcher.ts               # Polling loop, daily cap, tag removal, graceful shutdown
-│   ├── processor.ts             # Per-item orchestration (gather → link → generate → attach)
+│   ├── processor.ts             # Per-item orchestration (gather → classify → link → generate → attach)
+│   ├── classifier.ts            # Read-only classifier agent (newfeature/update/changelog + target article)
 │   ├── generator.ts             # Claude Agent SDK runner + tool gating (writes fenced to OUTPUT_DIR)
 │   ├── skill-linker.ts          # Junction docs skills into the source repo
 │   └── skill-loader.ts          # Discover skills for the prompt listing
@@ -71,6 +74,7 @@ tests/                           # Mirror of src/ with full coverage
 |---------|-------------|
 | `bun run start` | Start the watcher (polls every N minutes) |
 | `bun run once` | Run a single poll cycle and exit |
+| `bun src/cli/index.ts classify-item <id>` | Run only the classifier for one item (prints the JSON decision) |
 | `bun src/cli/index.ts test-item <id>` | Generate docs for one item (dry-run) |
 | `bun src/cli/index.ts debug-tags` | List items carrying the `write-docs` tag |
 | `bun src/cli/index.ts reset-state` | Clear processed state |
