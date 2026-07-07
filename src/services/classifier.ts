@@ -266,11 +266,15 @@ export async function classifyDocsChange(
     );
   }
 
-  const classification = parseClassification(finalText);
+  // The block can straddle a streamed-message boundary, leaving the final
+  // result text with the end marker but not the opening one — when the final
+  // text alone does not parse, retry against the run's full assistant text.
+  const classification =
+    parseClassification(finalText) ?? parseClassification(assistantTexts.join('\n'));
   if (!classification) {
     const tail = finalText.trim().slice(-1500);
     throw new Error(
-      `Classifier returned no parseable <<<CLASSIFICATION>>> block (subtype=${resultSubtype ?? 'none'}). Final message tail:\n${tail}`,
+      `Classifier returned no parseable <<<CLASSIFICATION>>> block (subtype=${resultSubtype ?? 'none'}, checked the final message and the full run text). Final message tail:\n${tail}`,
     );
   }
   return classification;
