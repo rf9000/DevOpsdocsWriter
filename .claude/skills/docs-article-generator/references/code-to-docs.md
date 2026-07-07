@@ -159,12 +159,21 @@ or setup page your changed AL objects belong to — **not** on title-word simila
 
 | Signal | Confidence |
 |--------|-----------|
-| One article documents the same page/setup object and the bold captions your change touches | **Confident** → `update` |
-| The change extends what that one article already covers (new action on a documented page, new field on a documented setup page, new status in a documented state table) | **Confident** → `update` |
-| Several candidate articles could plausibly own it, none clearly | **Uncertain** → `newfeature`, flag overlap |
+| An article documents the same page/setup object and the bold captions your change touches | **Confident** → `update` |
+| The change extends what an article already covers (new action on a documented page, new field/column on a documented page, new status in a documented state table) | **Confident** → `update` |
+| Several candidate articles could plausibly own it, and at least one documents the page/setup object the changed UI lives on | Still **Confident** → `update` — the ambiguity decides only *which* article to target (see tie-break below), never the kind |
+| Several candidate articles touch the area, but **none** documents the changed page/setup object itself | **Uncertain** → `newfeature`, flag overlap |
 | An article only mentions the area tangentially / in passing | **Uncertain** → `newfeature`, flag overlap |
 | The match rests on title wording rather than shared captions/objects | **Uncertain** → `newfeature`, flag overlap |
-| The change is a confident match's feature *area* but a genuinely new sub-topic | `newfeature` (new file), cross-link the existing article |
+| The change introduces a genuinely new sub-topic: a **new** page, setup object, or workflow that no article documents | `newfeature` (new file), cross-link the existing article |
+
+**New UI on a documented page is always an `update`.** If the change adds fields, columns, or
+actions to a page or setup object that an existing article documents, classify `update` — even
+when the capability feels new, and even when several articles plausibly cover the area. The
+"new sub-topic" row applies only to a new page/object/workflow, never to new UI elements on a
+documented page. **Tie-break for the target:** prefer the article that documents the page the
+new UI lives on; name the runner-up candidate in the work-item comment
+(`also relates to <PREFIX>-###`) so a human can move the content if the editorial home is wrong.
 
 **Magnitude tilts the call.** Small changes rarely deserve a brand-new article. When the
 magnitude (§3) is a **minor tweak** *and* a plausible existing article documents the same
@@ -179,14 +188,23 @@ work-item comment.
 
 ### Delta update note format
 
-A delta note is **not** a standalone article — it has no `meta` frontmatter, no single H1, no id
-of its own, and is **not** run through the article-structure validation. It tells the writer
-exactly what to change in the existing article, in house style, so fragments paste straight in.
-Still obey "code wins": every bold UI term must trace to a real AL caption.
+A delta note is **not** a standalone publishable page: it has no `meta` frontmatter, no article
+id of its own, and is **exempt from the article-structure validation**. Its reader is a human
+technical writer, so it must be instantly recognizable as *instructions for updating an existing
+article* — never mistakable for a small article. The scaffold below is **mandatory**: the
+`# Update to ...` H1, the banner blockquote, the `Target file:`/`Work item:` lines, and the three
+sections. Proportionality (§3) caps the *content of the Suggested edits*, never the scaffold.
+It tells the writer exactly what to change in the existing article, in house style, so fragments
+paste straight in. Still obey "code wins": every bold UI term must trace to a real AL caption.
 
 ```
 # Update to CB-142 — Payment approval
+
+> **This is an update to an existing article, not a standalone page.** Apply the edits
+> below to the published article **CB-142**.
+
 Target file: en-us\<Solution name>\Payments\Approving payments.md
+Work item: <work-item id> | PR: <PR id, when linked>
 
 ## What changed
 <1-2 sentences: the new/changed capability, in user terms>
