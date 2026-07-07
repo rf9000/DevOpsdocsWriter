@@ -171,9 +171,11 @@ or setup page your changed AL objects belong to — **not** on title-word simila
 actions to a page or setup object that an existing article documents, classify `update` — even
 when the capability feels new, and even when several articles plausibly cover the area. The
 "new sub-topic" row applies only to a new page/object/workflow, never to new UI elements on a
-documented page. **Tie-break for the target:** prefer the article that documents the page the
-new UI lives on; name the runner-up candidate in the work-item comment
-(`also relates to <PREFIX>-###`) so a human can move the content if the editorial home is wrong.
+documented page. **Tie-break for the target:** prefer the article whose *primary subject* is the page the new UI
+lives on — the one with a dedicated section explaining that page and its purpose — over an
+article that merely walks through the page's columns while documenting a different feature.
+Name the runner-up candidate in the work-item comment (`also relates to <PREFIX>-###`) so a
+human can move the content if the editorial home is wrong.
 
 **Magnitude tilts the call.** Small changes rarely deserve a brand-new article. When the
 magnitude (§3) is a **minor tweak** *and* a plausible existing article documents the same
