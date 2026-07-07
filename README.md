@@ -1,6 +1,6 @@
 # docsWriter
 
-Automatically generates documentation articles from Azure DevOps work items. Tag a work item `write-docs`, and docsWriter reads its description, comments, and linked pull requests, drives the Claude Agent SDK over your AL source repo to produce a complete Continia Banking documentation article, attaches the article to the work item, posts a confirmation comment, and removes the tag.
+Automatically generates documentation articles from Azure DevOps work items. Tag a work item `write-docs`, and docsWriter reads its description, comments, and linked pull requests, drives the Claude Agent SDK over your AL source repo to produce a complete Continia documentation article, attaches the article to the work item, posts a confirmation comment, and removes the tag.
 
 Built with Bun, TypeScript, Zod, and `@anthropic-ai/claude-agent-sdk`.
 

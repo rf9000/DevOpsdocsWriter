@@ -19,7 +19,9 @@ function ctx(overrides: Partial<DocsContext> = {}): DocsContext {
     pullRequests: [],
     discoveredSkills: [],
     outputPath: 'C:/out/workitem-42-docs.md',
-    docsRepoPath: 'C:/repos/continia.docs.articles',
+    docsRepoPath: 'C:/repos/continia.docs.articles/en-us/Continia Banking',
+    productName: 'Continia Banking',
+    idPrefix: 'CB',
     ...overrides,
   };
 }
@@ -110,15 +112,36 @@ describe('buildSystemPrompt', () => {
     const sys = buildSystemPrompt(
       promptPath,
       [],
-      ctx({ docsRepoPath: 'C:/repos/continia.docs.articles' }),
+      ctx({ docsRepoPath: 'C:/repos/continia.docs.articles/en-us/Continia Banking' }),
     );
     // The docs set path must be passed so detection of existing articles works.
-    expect(sys).toContain('C:/repos/continia.docs.articles');
+    expect(sys).toContain('C:/repos/continia.docs.articles/en-us/Continia Banking');
     // The three output kinds and the classification marker must be specified.
     expect(sys).toContain('newfeature');
     expect(sys).toContain('update');
     expect(sys).toContain('changelog');
     expect(sys).toContain('DOCS-OUTPUT-KIND');
+  });
+
+  test('scopes the docs search to the product folder and uses the product id prefix', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        docsRepoPath: '/home/azureuser/repos/continia.docs.articles/en-us/Continia Document Capture',
+        productName: 'Continia Document Capture',
+        idPrefix: 'DC',
+      }),
+    );
+    expect(sys).toContain('Continia Document Capture');
+    expect(sys).toContain('/home/azureuser/repos/continia.docs.articles/en-us/Continia Document Capture');
+    // Id-minting and the update-target marker must use the product's prefix...
+    expect(sys).toContain('DC-###');
+    expect(sys).toContain('`DC-` number');
+    // ...and no Banking prefix may leak into a DC run.
+    expect(sys).not.toContain('CB-');
+    // The scope instruction must forbid cross-product searching.
+    expect(sys).toMatch(/ONLY inside this folder/i);
   });
 });
 

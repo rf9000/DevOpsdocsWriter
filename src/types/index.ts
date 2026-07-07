@@ -4,9 +4,17 @@ export interface AppConfig {
   orgUrl: string;
   project: string;
   pat: string;
-  /** Local path to the AL source repository the agent searches (cwd for the agent). */
+  /**
+   * AL source repo for the item currently being processed (cwd for the agent).
+   * Loaded as a fallback default; the processor overrides it per work item with
+   * the entry from `targetRepoPaths` for the resolved product.
+   */
   targetRepoPath: string;
-  /** Local path to the continia.docs.articles repo (read for sibling tone, toc, CB-id lookups). */
+  /** Per-product AL source repos, keyed by article-id prefix (from `TARGET_REPO_PATH_<PREFIX>` env vars). */
+  targetRepoPaths: Record<string, string>;
+  /** Work item field that identifies the product (default `System.AreaPath`). */
+  productField: string;
+  /** Local path to the continia.docs.articles repo (read for sibling tone, toc, article-id lookups). */
   docsRepoPath: string;
   /** Directory the agent writes the finished article into and docsWriter reads to attach. */
   outputDir: string;
@@ -71,6 +79,8 @@ export interface PrContext {
 /** Persisted state tracking which items have already been documented + daily cap. */
 export interface ProcessedState {
   processedItemIds: number[];
+  /** Items already given a "could not resolve product" comment, so it is posted only once. */
+  productCommentedItemIds: number[];
   lastRunAt: string;
   dailyDocsCount: number;
   dailyCountDate: string;
@@ -85,4 +95,10 @@ export interface DocsProcessResult {
   /** Path to the agent summary file (written on dry runs instead of logging it). */
   summaryPath?: string;
   error?: string;
+  /**
+   * Human-readable explanation when the item was skipped because its product
+   * could not be resolved (unmapped area path, missing TARGET_REPO_PATH_<PREFIX>,
+   * or missing docs folder). The watcher posts it as a one-time work-item comment.
+   */
+  productIssue?: string;
 }

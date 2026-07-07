@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic linter for Continia Banking documentation articles.
+"""Deterministic linter for Continia documentation articles.
 
 Implements the [script] rules from
 .claude/skills/docs-writer/references/validation-rules.md
@@ -20,30 +20,44 @@ BLOCKING = "BLOCKING"
 WARNING = "WARNING"
 INFO = "INFO"
 
-CONTRACTIONS = [
-    "can't", "won't", "don't", "doesn't", "isn't", "aren't", "wasn't", "weren't",
-    "haven't", "hasn't", "hadn't", "didn't", "couldn't", "shouldn't", "wouldn't",
-    "it's", "you're", "we're", "they're", "i'm", "you'll", "we'll", "they'll",
-    "it'll", "that's", "there's", "here's", "let's", "what's", "who's",
-]
+# Only the style guide's invalid list is banned (§9.3); valid contractions
+# (you'll, won't, it's, can't, don't, ...) are allowed.
+INVALID_CONTRACTIONS = ["there'd", "they'd", "you'd", "it'd", "ain't"]
 CONTRACTION_RE = re.compile(
-    r"\b(" + "|".join(re.escape(c) for c in CONTRACTIONS) + r")\b",
+    r"\b(" + "|".join(re.escape(c).replace("'", "[’']") for c in INVALID_CONTRACTIONS) + r")\b",
     re.IGNORECASE,
 )
+EM_DASH_RE = re.compile(r"—")
+LATIN_ABBR_RE = re.compile(r"\b(e\.g\.|i\.e\.|etc\.|et al\.)", re.IGNORECASE)
+# '!' in body text, excluding image syntax (![alt]) and GH alerts (> [!NOTE], caught by CO03)
+EXCLAMATION_RE = re.compile(r"!(?!\[)")
+PLURAL_S_RE = re.compile(r"\w\(s\)")
 
 LINK_RE = re.compile(r"(!?)\[([^\]]*)\]\(([^)]+)\)")
 IMG_EXT_RE = re.compile(r"\.(png|jpe?g|gif|svg|webp)(\?.*)?$", re.IGNORECASE)
-VALID_CB_RE = re.compile(r"^@CB-\d+(@[\w-]+|#[\w-]+)?$")
+# Internal article links: @<PREFIX>-### where <PREFIX> is the product's id
+# prefix (CB, DC, EM, COPP, ...), optionally with a section anchor.
+VALID_ID_LINK_RE = re.compile(r"^@[A-Z][A-Za-z0-9]*-\d+(@[\w-]+|#[\w-]+)?$")
+# Article ids: <PREFIX>-### (e.g. CB-130, DC-178, COPP-04).
+VALID_ID_RE = re.compile(r"^[A-Z][A-Za-z0-9]*-\d+$")
 HINT_OPEN_RE = re.compile(r"\{%\s*hint\s+style=\"([^\"]*)\"\s*%\}")
 HINT_OPEN_ANY_RE = re.compile(r"\{%\s*hint\b")
 HINT_CLOSE_RE = re.compile(r"\{%\s*endhint\s*%\}")
 GH_ALERT_RE = re.compile(r"^\s*>\s*\[!(NOTE|IMPORTANT|WARNING|TIP|CAUTION)\]")
-VALID_HINT_STYLES = {"info", "success", "danger"}
+VALID_HINT_STYLES = {"info", "success", "danger", "warning"}
+
+
+# Product-name tails a title may add over the H1 (e.g. "... in Continia Banking",
+# "... in Document Capture"); stripped before the HD02 comparison.
+PRODUCT_TITLE_TAIL_RE = re.compile(
+    r"\s+in (continia [\w ]+|document capture|expense management|payment management"
+    r"|collection management|document output)$"
+)
 
 
 def normalize_title(text):
     text = text.lower().strip()
-    text = re.sub(r"\s+in continia banking$", "", text)
+    text = PRODUCT_TITLE_TAIL_RE.sub("", text)
     text = re.sub(r"[^\w\s]", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
@@ -100,13 +114,21 @@ def lint(path):
                 add("FM02", BLOCKING, 1, f"Frontmatter missing required key '{key}'.")
         if "date" in fm and not re.match(r"^\d{2}-\d{2}-\d{4}$", fm["date"]):
             add("FM03", BLOCKING, 1, f"date '{fm['date']}' is not DD-MM-YYYY.")
-        if "id" in fm and not re.match(r"^CB-\d+$", fm["id"]):
-            add("FM04", BLOCKING, 1, f"id '{fm['id']}' is not in CB-### form.")
+        if "id" in fm and not VALID_ID_RE.match(fm["id"]):
+            add("FM04", BLOCKING, 1, f"id '{fm['id']}' is not in <PREFIX>-### form (e.g. CB-130, DC-178).")
         if "lang" in fm and fm["lang"] != "en":
             add("FM05", BLOCKING, 1, f"lang '{fm['lang']}' must be 'en'.")
 
     # body offset: lines after frontmatter
     body_start = fm_end + 1 if fm_end >= 0 else 0
+
+    # IM01: the product's image folder, derived from the article's own id prefix
+    # (id CB-130 -> /images/CB/, id DC-178 -> /images/DC/). None (generic
+    # /images/ check) when the id is absent or malformed.
+    article_id = fm.get("id", "")
+    expected_image_dir = (
+        f"/images/{article_id.split('-')[0]}/" if VALID_ID_RE.match(article_id) else None
+    )
 
     # ---- B. Headings ----
     h1_lines = []
@@ -143,17 +165,33 @@ def lint(path):
             m = HINT_OPEN_RE.search(line)
             if m:
                 if m.group(1) not in VALID_HINT_STYLES:
-                    add("CO02", BLOCKING, n, f"Hint style '{m.group(1)}' invalid (use info/success/danger).")
+                    add("CO02", BLOCKING, n, f"Hint style '{m.group(1)}' invalid (use info/success/danger/warning).")
             else:
-                add("CO02", BLOCKING, n, "Malformed hint tag; expected {% hint style=\"info|success|danger\" %}.")
+                add("CO02", BLOCKING, n, "Malformed hint tag; expected {% hint style=\"info|success|danger|warning\" %}.")
         if HINT_CLOSE_RE.search(line):
             hint_close += 1
         if GH_ALERT_RE.match(line):
             add("CO03", WARNING, n, "GitHub-style alert (> [!...]); use {% hint %} instead.")
 
-        # C (tone). VT01 contractions
+        # C (tone). VT01 invalid contractions
         for m in CONTRACTION_RE.finditer(line):
-            add("VT01", WARNING, n, f"Contraction '{m.group(0)}' found; spell it out.")
+            add("VT01", WARNING, n, f"Invalid contraction '{m.group(0)}'; rephrase (valid-list contractions are fine).")
+
+        # VT06 em dashes
+        if EM_DASH_RE.search(line):
+            add("VT06", WARNING, n, "Em dash (—) found; use an en dash (–) or restructure the sentence.")
+
+        # VT07 Latin abbreviations
+        for m in LATIN_ABBR_RE.finditer(line):
+            add("VT07", WARNING, n, f"Latin abbreviation '{m.group(0)}' found; restructure the sentence instead.")
+
+        # VT08 exclamation marks (image syntax excluded; GH alerts handled by CO03)
+        if not GH_ALERT_RE.match(line) and EXCLAMATION_RE.search(line):
+            add("VT08", WARNING, n, "Exclamation mark in body text; never use exclamation marks.")
+
+        # VT09 "(s)" plural suffix
+        if PLURAL_S_RE.search(line):
+            add("VT09", WARNING, n, "'(s)' plural suffix found; use the plural or 'one or more'.")
 
         # UI05 search pattern
         if "for and select" in line and "Search" in line and "{{search}}" not in line:
@@ -166,13 +204,15 @@ def lint(path):
             target = lm.group(3).strip()
             if is_img:
                 if IMG_EXT_RE.search(target) and not target.lower().startswith("http"):
-                    if "/images/CB/" not in target:
-                        add("IM01", WARNING, n, f"Image '{target}' is not under /images/CB/.")
+                    if expected_image_dir and expected_image_dir not in target:
+                        add("IM01", WARNING, n, f"Image '{target}' is not under {expected_image_dir}.")
+                    elif not expected_image_dir and "/images/" not in target:
+                        add("IM01", WARNING, n, f"Image '{target}' is not under /images/.")
                 if label.strip() == "":
                     add("IM02", WARNING, n, "Image has empty alt text.")
             else:
-                if target.startswith("@CB") and not VALID_CB_RE.match(target):
-                    add("LK01", BLOCKING, n, f"Malformed internal link target '{target}' (expected @CB-### or @CB-###@anchor / @CB-####anchor).")
+                if target.startswith("@") and not VALID_ID_LINK_RE.match(target):
+                    add("LK01", BLOCKING, n, f"Malformed internal link target '{target}' (expected @<PREFIX>-### or @<PREFIX>-###@anchor / @<PREFIX>-####anchor).")
 
     if hint_open != hint_close:
         add("CO01", BLOCKING, 0, f"Unbalanced hints: {hint_open} {{% hint %}} vs {hint_close} {{% endhint %}}.")

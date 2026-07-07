@@ -1,984 +1,633 @@
-# Continia Banking Documentation Style Guide
+# Continia Documentation Style Guide (Agent Reference)
 
-Complete reference for writing documentation that matches the existing Continia Banking docs. This file contains detailed templates, verbatim examples, and formatting rules organized by article type.
+This file is a machine-optimized style reference for the Continia docsWriter agent. It is generated from the human-written Continia Docs style guide and re-compiled so that every stylistic decision is expressed as a directive: one rule, one default, one exception condition, paired with a compliance example. Use this file, not the human guide, as the operative reference when drafting or editing Continia documentation articles.
 
-## Table of Contents
+## Table of contents
 
-- [1. Frontmatter Reference](#1-frontmatter-reference)
-- [2. Article Type Templates](#2-article-type-templates)
-  - [2.1 Setup/How-to Articles](#21-setuphow-to-articles)
-  - [2.2 Overview/Index Articles](#22-overviewindex-articles)
-  - [2.3 Conceptual Articles](#23-conceptual-articles)
-  - [2.4 Bank Onboarding Articles](#24-bank-onboarding-articles)
-  - [2.5 Changelog Articles](#25-changelog-articles)
-  - [2.6 FAQ Articles](#26-faq-articles)
-- [3. UI Element Formatting](#3-ui-element-formatting)
-- [4. Procedure Writing](#4-procedure-writing)
-- [5. Callout Boxes](#5-callout-boxes)
-- [6. Links and Cross-References](#6-links-and-cross-references)
-- [7. Tables](#7-tables)
-- [8. Vocabulary and Phrasing](#8-vocabulary-and-phrasing)
-- [9. TOC File Format](#9-toc-file-format)
-- [10. Sentence Patterns](#10-sentence-patterns)
-- [11. Images, Media, and Template Variables](#11-images-media-and-template-variables)
+1. [Frontmatter and metadata](#1-frontmatter-and-metadata)
+2. [Choosing and structuring an article type](#2-choosing-and-structuring-an-article-type)
+3. [Writing introductions, examples, and scenarios](#3-writing-introductions-examples-and-scenarios)
+4. [Writing procedures](#4-writing-procedures)
+5. [Formatting UI and product references](#5-formatting-ui-and-product-references)
+6. [Callouts](#6-callouts)
+7. [Links and cross-references](#7-links-and-cross-references)
+8. [Tables and lists](#8-tables-and-lists)
+9. [Vocabulary, grammar, and phrasing](#9-vocabulary-grammar-and-phrasing)
+10. [Sentence-pattern library](#10-sentence-pattern-library)
+11. [Images, media, and template variables](#11-images-media-and-template-variables)
 
 ---
 
-## 1. Frontmatter Reference
+## 1. Frontmatter and metadata
 
-Every documentation article starts with a fenced **`meta`** block (the GitBook format the docs site is moving to):
+Every article starts with a `meta` fence containing five fields.
 
-````
+````markdown
 ```meta
-title: Setting up direct debit in Continia Banking
-date: 18-03-2026
-description: Learn how to configure and manage direct debit in Continia Banking.
-id: CB-130
-lang: en
+title: [Title, sentence case]
+date: [dd-mm-yyyy]
+description: [One sentence describing what the article covers]
+id: [PREFIX]-[###]
+lang: [en|da|de]
 ```
 ````
 
 **Field rules:**
-- Use the ` ```meta ` … ` ``` ` fence, **not** a `--- ... ---` YAML block. This is non-negotiable for new content. Older articles in the corpus still use `---`; they are mid-migration. Write new articles with ` ```meta ` **regardless of what a sibling shows** — reading a sibling for tone does NOT license copying its legacy `---` block or its field order. Emitting a `--- ... ---` block (or the wrong field order) in a new article is a defect, even though the validator currently tolerates `---` during the migration.
-- Field order: `title`, `date`, `description`, `id`, `lang`.
-- `title`: Descriptive, action-oriented. For setup articles: "Setting up [feature] in Continia Banking". For conceptual: "[Feature] in Continia Banking".
-- `date`: DD-MM-YYYY format (European). Use today's date for new articles.
-- `description`: 1-2 sentences. Starts with "Learn how to..." or plainly describes what the article covers (e.g. "How to enable...").
-- `id`: Format `CB-###`. Must be unique across the entire documentation set.
-- `lang`: Always `en`.
+
+- `title` — Sentence case. Must be nearly identical to the visible `# H1` title. Exception: append "in [Solution name]" to the metadata title (and optionally the visible title) when the topic is shared across multiple solutions and needs disambiguation.
+  **Example:** `Enhanced line recognition in Document Capture`
+- `date` — Format `dd-mm-yyyy`. This is the only place `dd-mm-yyyy` is used. Never use this format in body text (see [Section 9](#9-vocabulary-grammar-and-phrasing) for body-text date format).
+- `description` — One short sentence stating what the article is about. Do not use the abbreviated solution name here; if a solution is named, use the full first-mention form.
+  **Example:** `How to request external functionality and events that are currently missing.`
+- `id` — Format `[PREFIX]-[###]`, where `[PREFIX]` is the product prefix (table below) and `[###]` is a sequential number. Assign the next unused number for that product's prefix. Never reuse or skip a number in a product's sequence.
+- `lang` — Two-letter code: `en` (English), `da` (Danish), `de` (German).
+
+### Product prefix table
+
+| Product | Prefix | Permalink solution code |
+|---|---|---|
+| Continia Document Capture | DC | `dc` |
+| Continia Expense Management | EM | `em` |
+| Continia Banking | CB | `cb` |
+| Continia Finance | CF | <!-- GAP: permalink solution code for Continia Finance not specified in the human guide --> |
+| Continia Document Output | DO | `do` |
+| Continia Payment Management | PM | `pm` |
+| Continia OPplus | OPplus | `copp` |
+| Continia Collection Management | CM | `cm` |
+
+### Permalinks
+
+Permalink syntax:
+
+```
+http://go.continia.com/docs/[language code]/[solution code]/linkid=[prefix-lowercase]-[article ID number]
+```
+
+**Example:** `http://go.continia.com/docs/en-us/cb/linkid=cb-134`
+
+Permalinks are generated from the `id` metadata field and are consumed by Business Central, Continia Learn, and Marketing. Always populate `id` so a permalink can be derived.
 
 ---
 
-## 2. Article Type Templates
+## 2. Choosing and structuring an article type
 
-### Choosing the article type
+### 2.1 Article type decision table
 
-Pick the type from what the reader needs to *do*, not from the code that changed:
+| Situation | Article type | Title pattern | Example |
+|---|---|---|---|
+| Reader must perform a task or reach a specific goal | Procedural | `[Verb]ing [object]` | Adding a payment service provider |
+| Reader needs background, principles, or a mental model, with or without an accompanying procedure | Conceptual | `[Verb]ing [object]` or `Understanding [topic]` | Working with payment service providers; Understanding Continia Core |
+| Article is the topmost/orientation article of a complex folder | Overview (conceptual subtype) | Do not use the word "Overview." Use the folder name or "Setting up [solution name]" | Setting up Continia Banking |
+| Reader needs a list of facts, fields, specs, or definitions | Reference | Noun phrase, no verb | Billing, consumption, and transactions |
+| Reader must complete a sequence of interdependent procedures toward one broader goal | Walkthrough | `Walkthrough: [task in gerund form]` | Walkthrough: Setting up a new approval workflow |
+| Reader has a specific, frequently recurring question | FAQ | Topic/question phrasing consistent with the folder theme | <!-- GAP: no explicit FAQ title pattern given in the human guide --> |
 
-| If the article's job is to... | Use type | Title pattern |
-|-------------------------------|----------|---------------|
-| Walk the user through configuring or performing a task | **Setup/How-to** | "Setting up [feature] in Continia Banking" / "[Action] in Continia Banking" |
-| Be a landing page that routes to sub-articles | **Overview/Index** | "Overview" / "[Topic] overview" |
-| Explain what a feature is, why it exists, and how it works | **Conceptual** | "[Topic] in Continia Banking" / "Introducing [feature]" |
-| Get a specific bank/provider connected | **Bank onboarding** | "Onboarding [Bank]" / "Onboarding through [Provider]" |
-| List per-version changes | **Changelog** | "Detailed Changelog for Continia Banking [Year] [Release]" |
-| Answer recurring user questions | **FAQ** | "[Topic] FAQ" |
+Do not pre-announce unreleased features in any article type. Exception: roadmap articles, which exist specifically to describe planned features.
 
-A larger feature often needs more than one: a **Conceptual** article (what/why) plus one or
-more **Setup/How-to** articles (configure/use), linked from an **Overview**. When in doubt,
-split rather than mixing concept and procedure in one page.
+### 2.2 Procedural articles
 
-### Proportionality — match the article to the size of the change
-
-The article's length must track the size of what changed, not fill a template. **A small change
-gets a small article.** When the brief gives you a change magnitude (the `docs-article-generator`
-passes one), let it cap the depth:
-
-| Magnitude | Write |
-|-----------|-------|
-| **Minor tweak** (a couple of new fields, a toggle) | One tight section: a short intro + a single `## To ...` procedure. No "how it works"/priority-hierarchy explainer, no reference table unless the field list itself needs one, at most one hint. |
-| **Workflow improvement** | The changed flow only — do not re-document the surrounding feature. |
-| **New feature / module** | Full structure as the feature warrants. |
-
-Anti-filler rules:
-
-- The number of sections should track the number of things the user actually has to **understand
-  or do**. If a section restates the intro or explains mechanics the user does not act on, cut it.
-- Do not invent explainer sections, comparison tables, or extra `{% hint %}` boxes to make a
-  thin change look substantial. Padding produces text that "sounds fine without really saying
-  much" — the opposite of useful.
-- Prefer one precise sentence over a paragraph of generic framing.
-
-### Impact in the introduction — only when sourced
-
-Introductions frame business value (problem solved, when it is useful) **before** mechanics — but
-only when that value is actually known. The *why/when/before-vs-after* is **not** in the code; it
-comes from the work item, comments, or PR (the brief supplies it).
-
-- When the impact is sourced, lead with it: the problem, then what the user can now do.
-- When it is **not** sourced, keep the intro minimal (what the feature does and where) rather than
-  manufacturing a plausible-sounding rationale. Inventing a "why" is filler and can be wrong.
-- Never assert a before/after the brief did not give you. Unknown impact is flagged for a human
-  (the generator surfaces it to the author/SME), not written into the article as fact.
-
-### 2.1 Setup/How-to Articles
-
-**Title pattern:** "Setting up [feature] in Continia Banking" or "[Action] in Continia Banking"
-
-**Template:**
-
-````markdown
-```meta
-title: Setting up [feature] in Continia Banking
-date: DD-MM-YYYY
-description: Learn how to configure [feature] in Continia Banking.
-id: CB-[number]
-lang: en
-```
-
-# Setting up [feature]
-
-[1-2 paragraph introduction explaining what the feature does and why it matters. Frame in terms of business value.]
-
-{% hint style="info" %}
-[Optional: Important prerequisite or contextual information.]
-{% endhint %}
-
-## To configure [feature]
-
-[Optional: 1-2 sentence context about when or why to do this.]
-
-1. Search ({{search}}) for and select **[Page Name]**.
-
-2. On the **[FastTab Name]** FastTab, fill in the following fields:
-   * **[Field Name]** - [explanation of what to enter and why].
-   * **[Field Name]** - [explanation of what to enter and why].
-
-3. On the action bar, select **[Menu]** > **[Action]**.
-
-4. Click **OK** to save the settings.
-
-## To [second task]
-
-[Context paragraph.]
-
-1. [Step 1]
-2. [Step 2]
-3. [Step 3]
-
-{% hint style="success" %}
-[Optional: Best practice tip related to this task.]
-{% endhint %}
-
-## Related information
-
-[Related article 1](@CB-###)
-[Related article 2](@CB-###)
-```
-````
-
-**Verbatim example (from Setting up direct debit):**
+Use this skeleton. Detailed procedure-writing rules are in [Section 4](#4-writing-procedures).
 
 ```markdown
-# Setting up direct debit
+# [Verbing object]
 
-Continia Banking enhances the standard direct debit functionality in Business Central
-by enabling users to view and manage customer direct debit suggestions. This allows
-you to track collections transferred from the customer's bank account to yours.
+[Context paragraph: what the functionality is for and why it matters]
 
-{% hint style="info" %}
-Direct debit availability can vary by bank. In the [banks overview page](@CB-79),
-a blank entry in the **Direct Debit** column means direct debit isn't supported,
-**Manual** indicates it's available via manual file upload, and **Direct** means
-both manual upload and direct processing are supported.
-{% endhint %}
+To [do the task]:
 
-## To configure direct debit
-
-Before creating a direct debit payment suggestion, you need to enable the feature
-and configure the default settings.
-
-1. Search ({{search}}) for and select **Banking Export Setup**.
-
-2. On the **Direct Debit** FastTab, from the **Default Template Name** and
-**Default Batch Name** fields, select the templates you want to use for direct
-debit. These fields specify the default template and batch names for payment
-suggestions when processing direct debits. Once enabled, the system will
-prefill related fields during payment processing.
+1. [Step]
+2. [Step]
 ```
 
-### Key Considerations Pattern
+<!-- GAP: no verbatim example available — supply from corpus -->
 
-Some setup articles open with a "Key considerations" section:
+### 2.3 Conceptual articles
 
-```markdown
-## Key considerations
+Title starts with a gerund or "Understanding": `Working with payment service providers`, `Understanding Continia Core`. Content explains why the functionality is useful and provides the background, principles, and mental models needed before the reader attempts a procedure. Do not include numbered steps in a conceptual article; if steps are needed, write a separate procedural article and link to it.
 
-* **Mandatory fields** - fields marked with a red asterisk (*) must be completed to prevent errors.
-* **Notifications** - if any settings are missing or incorrect, notifications will appear on the reconciliation page.
-* **Don't change default rules** - [default rules](@CB-284) can't be deleted, only disabled.
-* **Always test a rule** - before using a rule in production, test it first.
-```
+<!-- GAP: no verbatim example available — supply from corpus -->
+
+### 2.4 Overview articles (conceptual subtype)
+
+- Default: skip the overview article for a standalone, single-concept folder. Write one only when the folder's content is complex enough to require orientation.
+- ToC entry name: `Overview`.
+- Title: never use the word "Overview." Use the folder name or "Setting up [solution name]."
+- Content: describe core concepts, capabilities, and features, each linking to its dedicated article. Do not add a table that links to every article in the folder.
+- Sort ToC entries by whatever order best serves the reader for that folder (for example, alphabetical for country lists, process order for "Getting Started" entries).
+
+### 2.5 Reference articles
+
+Title is a noun phrase: `Billing, consumption, and transactions`. Content is typically a table or bulleted list of facts or specifications.
+
+For release-plan style reference entries:
+- Describe each update with a noun phrase or gerund, not a full sentence, so the entry does not become outdated. **Example:** `Support for direct communication with Eika`; `Displaying embedded PDF files in the Document Viewer`.
+- For every released feature, link to the article that describes it, as the last line of that entry's body text. **Example:** `To learn more about the Payment Approval feature, see Setting up payment approval.`
+
+<!-- GAP: no verbatim example available — supply from corpus -->
+
+### 2.6 Walkthrough articles
+
+Use a walkthrough only when the tasks are sequential and interdependent toward one broader goal. If tasks are related but not dependent on each other, write a procedural article with multiple headings instead.
+
+Walkthroughs are correct when:
+- The reader needs an end-to-end understanding of a process.
+- Multiple steps depend on one another to reach the outcome.
+- Explaining the "why" behind each step reinforces learning.
+
+Title: `Walkthrough: [task in gerund form]`.
+
+Structure:
+1. Short introduction: what the walkthrough covers and why it matters.
+2. Each procedure listed as its own heading, in the order it must be performed. Each procedure follows standard procedural structure (heading, context introduction, numbered steps — see [Section 4](#4-writing-procedures)).
+3. Scenario-based context goes only in the introduction, or as an example after a relevant step. Never mix scenario narrative into the numbered steps themselves.
+
+If the walkthrough has 5 or more procedures, do one of the following:
+- Group procedures under subheadings.
+- Split into multiple walkthroughs that link to each other.
+- Convert some procedures into standalone topics, linked from a "Related tasks" section.
+
+<!-- GAP: no verbatim example available — supply from corpus -->
+
+### 2.7 FAQ articles
+
+- Include a question only if it is both frequent and easy to answer. If the answer is complex, write a dedicated article and link to it instead.
+- Distinguish customer-caused errors (eligible for FAQ) from bugs (route to support channels, never document as an FAQ answer).
+- Link each question to an existing article whenever one exists. If no article exists, do not invent one on the spot — flag the gap.
+- Group FAQ entries by theme. Place the FAQ article last within its folder.
+- Default: a folder should contain more main articles than FAQ entries. Do not use an FAQ article as a substitute for real documentation.
+- Place `Troubleshooting` and `FAQs` folders under `Getting Started`.
+
+<!-- GAP: no verbatim example available — supply from corpus -->
 
 ---
 
-### 2.2 Overview/Index Articles
+## 3. Writing introductions, examples, and scenarios
 
-**Title pattern:** "Overview" or "[Topic] overview"
-
-**Template:**
-
-````markdown
-```meta
-title: [Section name] overview
-date: DD-MM-YYYY
-description: [Brief overview of what this section covers.]
-id: CB-[number]
-lang: en
-```
-
-# Overview
-
-[1-2 sentence intro explaining what this section covers and who it's for.]
-
-## To get started
-
-[Brief intro sentence.]
-
-* [Article title](@CB-###) - [brief description of what that article covers].
-* [Article title](@CB-###) - [brief description].
-
-## To [verb] [object]
-
-[Brief intro sentence.]
-
-* [Article title](@CB-###) - [description, starts with lowercase verb: "overview of...", "step-by-step instructions for...", "guidance on..."].
-* [Article title](@CB-###) - [description].
-
-## To [verb] [object]
-
-* [Article title](@CB-###) - [description].
-```
-````
-
-**Verbatim example (from Payment Reconciliation Journal Overview):**
-
-```markdown
-# Overview
-
-This overview article guides you to the resources available for using the
-**Payment Reconciliation Journal**.
-
-## To get started
-
-To begin using the Payment Reconciliation Journal, see:
-
-* [Introducing the Payment Reconciliation Journal](@CB-106) - overview of
-  the general functionality.
-
-## To import payments
-
-Import external payment data into the journal:
-
-* [Importing payments into the Payment Reconciliation Journal](@CB-163) -
-  step-by-step instructions for importing payments.
-
-## To process payments
-
-* [Working in the Payment Reconciliation Journal](@CB-26) - guidance on
-  processing and reviewing payments.
-```
+- **Never pre-announce.** Do not mention a feature that has not been developed or released. Exception: roadmap articles.
+- **State the goal first.** Before any procedure or deep explanation, state the article's goal and key learning points.
+- **Examples** illustrate a single, narrow task or function. Use them to clarify one specific behavior.
+  **Example:** "You can differentiate the posting of your expense type based on expense user, expense user group, or country (for example, if applying a different VAT or sales tax for specific countries)."
+- **Scenarios** are broad, end-to-end use cases spanning multiple steps, features, or user roles. Title scenario subsections descriptively.
+  **Example:** "Advanced approval scenarios," "Four-eye approval scenarios."
+- **Continia Learn.** If a topic is already covered by a Continia Learn module or lesson, link to it instead of duplicating the explanation. Use an in-sentence descriptive link — never place the Learn link under a "Related information" section.
+  **Example:** "For more information on this, including a practical scenario, see the [Continia Learn](https://learn.continia.com/) unit on [delegating expense user tasks](https://learn.continia.com/module/set-up-users-in-EM/delegate-expense-user-tasks)."
 
 ---
 
-### 2.3 Conceptual Articles
+## 4. Writing procedures
 
-**Title pattern:** "[Feature/Topic] in Continia Banking" or "Introducing [feature]"
+- **Provide context before steps.** Open with a short paragraph stating what the feature does and why the reader would use it. This is where the article adds value beyond a bare step list.
+  **Example:**
+  > You can specify how to import bank account statements on the bank account card. Indicating whether to import for reconciliation and when to start the reconciliation determines how the statement is imported and handled in the Job Queue.
+- **"To + infinitive" opener.** Introduce the numbered steps with a sentence or fragment ending in a colon. Do not copy the header title verbatim.
+  **Example:** `To select the bank account statement import method:`
+- **Provide the path.** State where the reader is in the UI, not only what to click. Name the containing element (dialog box, FastTab, field), not just the target.
+  **Example:** "On the **Import Payments** dialog, in the **PSP Agreement** field, select the PSP agreement you want to import payments for."
+- **Numbered lists.** Always number procedure steps. Default: 9 steps or fewer per procedure. If a procedure has only one step, use a single bullet, not a numbered list of one.
+- **Menu paths (sequences).** Abbreviate a simple UI sequence with right-angle brackets: one space before and after each bracket; do not bold the bracket itself. Do not use brackets for a folder-path sequence.
+  **Example:** `Click **Accounts** > **Other accounts** > **Add an account**.`
+  ❌ `Click **Accounts**>**Other accounts**>**Add an account**.` (no spaces around bracket)
+  ❌ `Click **Accounts > Other accounts > Add an account**.` (bracket bolded)
 
-**Template:**
-
-````markdown
-```meta
-title: [Topic] in Continia Banking
-date: DD-MM-YYYY
-description: [Brief description of the concept.]
-id: CB-[number]
-lang: en
-```
-
-# [Topic] in Continia Banking
-
-[1-3 paragraph introduction. Start with the business problem or context.
-Explain what the feature achieves. Mention how it differs from or enhances
-standard Business Central functionality.]
-
-## [Concept category 1]
-
-[Explanation of the concept. Can use numbered lists for options/categories:]
-
-1. **[Option A]** - [description with link to detail article](@CB-###).
-2. **[Option B]** - [description with link](@CB-###).
-
-## [Concept category 2]
-
-[Deeper explanation of the feature's mechanics.]
-
-### [Sub-concept]
-
-[Details, can include bullet lists for technical details:]
-
-* **[Term]** - [definition/explanation].
-* **[Term]** - [definition/explanation].
-
-## Related information
-
-[Related article 1](@CB-###)
-[Related article 2](@CB-###)
-```
-````
-
-**Verbatim example (from Bank communication):**
-
-```markdown
-# Bank communication in Continia Banking
-
-Continia Banking offers multiple options for exchanging financial data between
-your bank and Business Central. The best method depends on your bank's integration
-options and your organization's requirements. You can choose from four connection types:
-
-1. Direct communication via Continia integration
-2. Direct communication via third party
-3. Azure Blob storage integration
-4. Manual file exchange
-```
-
-**Typical workflow pattern (within conceptual articles):**
-
-```markdown
-### Typical workflow
-
-1. Create and prepare payment suggestions in the payment journal.
-2. Send payment data directly to your bank from Business Central.
-3. The bank processes the transactions.
-4. Status updates are automatically imported back into Business Central.
-5. If errors occur, correct them and resend the file as needed.
-
-### Configuration
-
-You can manage communication settings on the **Bank Account Communication
-Setup** page. On the **Bank Account Card** page, on the action bar, select
-**Related** > **Communication Setup**.
-```
+<!-- GAP: no verbatim example available — supply from corpus -->
 
 ---
 
-### 2.4 Bank Onboarding Articles
+## 5. Formatting UI and product references
 
-**Title pattern:** "Onboarding [Bank Name]" or "Onboarding through [Provider]"
+### 5.1 What gets bold
 
-**Template:**
+| Element | Formatting | Example |
+|---|---|---|
+| Unique UI element (page, list, card, field, dialog box title, cue, dropdown item, FactBox instance) | Bold, sentence case | **Bank Account** card; **Document Capture Setup** |
+| Generic/non-unique container term (FastTab, FactBox, document journal, document card, used as a generic noun) | Not bold, lowercase | on the **Bank Account** FastTab (only "Bank Account" is bold) |
+| `From` / `To` field labels | Bold | In the **From** field |
+| UI element that appears in all caps in the product itself | Bold, sentence case (never reproduce all caps) | **Purchase**, not **PURCHASE** |
+| Codes (proper identifiers, not display labels) | Bold, keep all caps | Click the **PURCHASE** code; **EMPL-RECON** |
 
-````markdown
-```meta
-title: Onboarding [Bank Name] for Continia Banking
-date: DD-MM-YYYY
-description: Information about [Bank Name] and how to set up direct communication.
-id: CB-[number]
-lang: en
-```
+### 5.2 Interaction verb decision table
 
-# Onboarding [Bank Name]
+| Situation | Verb | Example |
+|---|---|---|
+| Desktop/laptop interaction with a button, link, or single element | click | Click **OK**. |
+| Picking from a list, menu, or group of options | select | Select **Open in new tab**. |
+| Reader must decide between alternatives (emphasizes the decision, not the pick) | choose | Choose your installation method. |
+| Touch/stylus interaction on mobile — used throughout Expense Management mobile-app documentation | tap | Tap **Settings**. |
+| Toggle control | enable / disable + toggle name — never use "toggle" as a verb | Enable the **Pass all filters** toggle. |
+| Checkbox | select / clear — never "check," "tick," or "deselect" | Select the **Pass all filters** checkbox. |
+| Opening the BC Search function at the start of a procedure | fixed pattern: `Search ({{search}}) for and select **[Page]**.` | Search ({{search}}) for and select **Bank Account**. |
 
-[1-2 sentence intro about what this article covers.]
+Default interaction verb across Continia Docs is **click** (audience works primarily on laptops/desktops). Exception: Expense Management documentation for the mobile app uses **tap** instead of **click** throughout.
 
-[Optional: Cross-reference to alternative methods.]
+### 5.3 Preposition decision table (on vs. in)
 
-[Optional: Bank-specific limitations paragraph.]
+| Container | Preposition | Example |
+|---|---|---|
+| Menu, tab, toolbar, taskbar, ruler, desktop, network, hardware platform, the Web, action bar, FastTab | on | on the **Standard** toolbar; on the **Bank Account** FastTab |
+| Field requiring data entry, dialog box, FactBox, FactBox pane, cue/cue group/action tile, action menu | in | in the **Save As** dialog box; in the **PSP Agreement** field |
 
-## Requirements
+### 5.4 Business Central UI element names
 
-* [Requirement 1 - e.g., agreement type needed]
-* [Requirement 2 - e.g., portal access]
-* See [Setting up bank accounts](@CB-37) for general setup instructions.
+| Name (EN-US) | Description | Preposition |
+|---|---|---|
+| FastTab | Collapsible/expandable sections on task pages | on |
+| FactBox pane | Section that appears when the reader clicks the "i" at the top-right of a page | in |
+| FactBox | Individual elements in the FactBox pane with the grey background | in |
+| Cue / Cue group / Action tiles | Elements on the Role Center page | in |
+| action bar | Section directly below the page/card title, containing action menus | on |
+| action menu | Individual menu within the action bar | in |
 
-## To [first setup task]
+### 5.5 Solution and module naming
 
-[Context paragraph if needed.]
+| Product | 1st mention | 2nd mention | Abbreviation |
+|---|---|---|---|
+| Solution | Continia Document Capture | Document Capture | DC |
+| Solution | Continia Expense Management | Expense Management | EM |
+| Solution | Continia Banking | Continia Banking | CB |
+| Solution | Continia Finance | Continia Finance | CF |
+| Solution | Continia Document Output | Document Output | DO |
+| Solution | Continia Payment Management | Payment Management | PM |
+| Solution | Continia OPplus | OPplus | OPplus |
+| Solution | Continia Collection Management | Collection Management | CM |
+| Solution | Continia Delivery Network | Continia Delivery Network | CDN |
+| Module | Continia Payment Approval | Payment Approval | — |
 
-1. [Step 1]
-2. [Step 2]
-3. [Step 3]
+Rules:
+- Use the full name on first mention in the body of the article (not in the title, metadata title, or metadata description). Use the short form after that.
+- Exception: **Continia Banking** and **Continia Finance** are always written in full — they have no shortened second-mention form.
+- Use abbreviations (PM, DC, EM, etc.) only inside tables. Avoid abbreviations in running text.
+- Solution names are proper nouns: never translate them and never otherwise alter them. Module names (for example, Payment Approval) are translated.
+- When referring to a specific environment (cloud, online, on-premises), write it in sentence case.
+- Default: do not prefix an article title with "Continia." Exception: solutions that require the full name on every mention (Continia Banking, Continia Finance) keep "Continia" in the title too.
 
-{% hint style="info" %}
-[Bank-specific note or timing information.]
-{% endhint %}
+### 5.6 Referring to versions of Continia solutions
 
-## To establish direct communication in Continia Banking
+| 1st mention | 2nd mention |
+|---|---|
+| Continia Document Capture 2025 R2 (v27) | Document Capture 2025 R2 |
+| | Document Capture 2025 R1 Service Pack 2 |
+| | Document Capture 2025 R1 Service Pack 2, hotfix 3 |
 
-To set up direct communication, you need the following information:
+### 5.7 Business Central and Dynamics NAV
 
-| Item | Description | Location |
-| ---- | ----------- | -------- |
-| [Credential 1] | [What it is and format] | [Where to obtain it] |
-| [Credential 2] | [What it is and format] | [Where to obtain it] |
+Default: refer to **Business Central**, never NAV or "Business Central/NAV." Exception: documentation that is exclusively relevant to a NAV installation (for example, instructions for updating an old version).
 
-[Instructions for entering credentials in Business Central.]
+| 1st mention | 2nd mention | Abbreviation |
+|---|---|---|
+| Microsoft Dynamics 365 Business Central | Business Central | BC |
+| Microsoft Dynamics NAV | Dynamics NAV | NAV |
 
-## Related information
+### 5.8 Referring to BC/NAV versions
 
-[Related bank article](@CB-###)
-[Setting up bank accounts](@CB-37)
-```
-````
+| Marketing name | Long name | Short name (menu) |
+|---|---|---|
+| Dynamics NAV | Microsoft Dynamics NAV | Dynamics NAV |
+| NAV2013 | Microsoft Dynamics NAV 2013 (version 7) | NAV2013 (version 7) |
+| NAV2015 | Microsoft Dynamics NAV 2015 (version 8) | NAV2015 (version 8) |
+| NAV2016 | Microsoft Dynamics NAV 2016 (version 9) | NAV2016 (version 9) |
+| NAV2017 | Microsoft Dynamics NAV 2017 (version 10) | NAV2017 (version 10) |
+| NAV2018 | Microsoft Dynamics NAV 2018 (version 11) | NAV2018 (version 11) |
+| NAV2019 | Microsoft Dynamics NAV 2019 (version 12) | NAV2019 (version 12) |
+| BC13 | Microsoft Dynamics 365 Business Central 2018 release wave 2 (BC v13) | BC v13 (BC 2018 wave 2) |
+| BC14 | Microsoft Dynamics 365 Business Central 2019 release wave 1 (BC v14) | BC v14 (BC 2019 wave 1) |
+| BC15 | Microsoft Dynamics 365 Business Central 2019 release wave 2 (BC v15) | BC v15 (BC 2019 wave 2) |
+| BC16 | Microsoft Dynamics 365 Business Central 2020 release wave 1 (BC v16) | BC v16 (BC 2020 wave 1) |
+| BC17 | Microsoft Dynamics 365 Business Central 2020 release wave 2 (BC v17) | BC v17 (BC 2020 wave 2) |
 
----
+### 5.9 Continia Expense Mobile App
 
-### 2.5 Changelog Articles
+- Full name: **Continia Expense Mobile App**.
+- After the first mention on a page, drop "Continia": **Expense Mobile App**.
+- Never drop "Mobile" — omitting it risks confusion with the EM app for Business Central.
+- Title case every word: **Continia Expense Mobile App**, not "Continia Expense mobile app."
 
-**Title pattern:** "Detailed Changelog for Continia Banking [Year] [Release]"
+### 5.10 Peppol
 
-**Template:**
-
-````markdown
-```meta
-title: Detailed Changelog for Continia Banking [Year] [Release]
-date: DD-MM-YYYY
-description: Changelog containing an overview of all new updates, features, and hotfixes for Continia Banking [Year] [Release]
-id: CB-[number]
-lang: en
-```
-
-# Detailed changelog for Continia Banking [Year] [Release]
-
-{% hint style="danger" %}
-Continia Banking [Year R#] supports the following version of Microsoft Dynamics 365
-Business Central: Business Central [Year R#] (v##).
-{% endhint %}
-
-{% hint style="success" %}
-As a Continia partner, we can notify you of new Continia Banking versions and
-service packs whenever we release them. To sign up for this service, go to
-[this page](https://continia.zendesk.com/hc/en-us/articles/...) in the Continia
-PartnerZone (only available to partners).
-{% endhint %}
-
-## Continia Banking [Year R#], Service Pack [#], hotfix [#]
-
-*Release date online: [Month Day, Year]*
-*Release date, on-premises: [Month Day, Year or "pending"]*
-*Continia Banking version: [X.Y.Z]*
-
-### New or changed functionality
-
-| Functional Area | Description | ID |
-| --------------- | ----------- | -- |
-| [Area] | [Business-focused description of the change] | [5-digit ID] |
-
-### Bug fixes
-
-| Functional Area | Description | ID |
-| --------------- | ----------- | -- |
-| [Area] | [Description of what was fixed] | [5-digit ID] |
-
-## Continia Banking [Year R#], Service Pack [#]
-
-[Repeat pattern for each SP/hotfix...]
-```
-````
-
-**Key rules for changelogs:**
-- Release dates use "Month Day, Year" format (e.g., "March 16, 2026") - NOT the DD-MM-YYYY frontmatter format
-- Version format: Major.Minor.Patch (e.g., 27.5.4)
-- Functional areas: "General Application", "Payment Export", "Payment Import", "CSV Import", "Payment Method"
-- Descriptions are business-focused, not technical
-- Multi-line descriptions use `<br />` within table cells
-- ID is a 5-digit number
+- Write **Peppol**, not "PEPPOL" — do not capitalize every letter.
+- The network's full name is **Peppol eDelivery Network**.
+- Peppol standards are formatted like this: **Peppol BIS3**.
 
 ---
 
-### 2.6 FAQ Articles
+## 6. Callouts
 
-**Title pattern:** "[Topic] FAQ" or "Frequently asked questions"
+### 6.1 Callout type decision table
 
-**Template:**
+| Type | Color (light/dark) | Use when | Syntax |
+|---|---|---|---|
+| Info (a.k.a. Note) | Purple | Information the reader should register even when skimming | `{% hint style="info" %}` … `{% endhint %}` |
+| Important (a.k.a. Danger) | Blue | Crucial information the reader needs to succeed | `{% hint style="danger" %}` … `{% endhint %}` |
+| Warning | Yellow | Critical content requiring immediate attention due to risk | `{% hint style="warning" %}` … `{% endhint %}` |
+| Success (a.k.a. Tip) | Green | Optional information that helps the reader succeed further | `{% hint style="success" %}` … `{% endhint %}` |
 
-````markdown
-```meta
-title: [Topic] FAQ
-date: DD-MM-YYYY
-description: Find answers to frequently asked questions about [topic].
-id: CB-[number]
-lang: en
-```
+### 6.2 Rules
 
-# [Topic] FAQ
+- Use callouts sparingly so they retain impact.
+- Do not place two callouts of the **same** type back to back. Different types may be stacked; leave one blank line between the end of the first callout and the start of the next.
+  **Example:**
+  ```
+  {% hint style="success" %}
+  Does this work?
+  {% endhint %}
 
-[1-2 sentence intro explaining what this FAQ covers.]
+  {% hint style="info" %}
+  Yes, it does.
+  {% endhint %}
+  ```
+- Default: do not put tables, procedures, bulleted/numbered lists, or images inside a callout. Show that content elsewhere in the article instead, so it does not distract from the callout's single point.
+- When a callout appears between items of an ordered or unordered list, add a blank line between the list item and the callout, and match the callout's indentation to the list item's content — otherwise the numbering breaks.
+  **Example:**
+  ```
+  1. First step.
 
-## [Question in natural language?]
+  2. Second step.
 
-[Direct answer, 1-3 paragraphs. Link to related articles where appropriate.]
+     {% hint style="info" %}
+     The indentation and numbering work fine.
+     {% endhint %}
 
-## [Another question?]
+  3. Third step.
+  ```
 
-[Answer. Can include numbered steps if procedural:]
+<!-- CONFLICT: the human guide gives contradictory claims about nesting an ordered list inside an unordered list (and vice versa) inside a callout — one passage says this combination "didn't use to work, but now it does," implying both nestings are now supported, while the main best-practice rule says to avoid nested lists in callouts entirely. Rule 6.2's "no lists inside callouts" default is kept as authoritative; the nested-list capability is not relied upon. Human review needed if a nested list inside a callout is ever required. -->
 
-1. [Step 1]
-2. [Step 2]
-3. [Step 3]
-```
-````
-
-**Key rules for FAQs:**
-- Each question is an H2 heading
-- Questions are natural language (not "Q: ...")
-- No "Answer:" prefix - content follows directly
-- Conversational tone, still professional
-- Link to detailed articles rather than duplicating content
-
----
-
-## 3. UI Element Formatting
-
-### What gets bold
-
-| Element | Format | Example |
-|---------|--------|---------|
-| Page names | **Bold** | `**Payment Journals**` |
-| Field names | **Bold** | `**Batch Name**` |
-| Button labels | **Bold** | `**OK**`, `**Next**`, `**Finish**` |
-| Action names | **Bold** | `**Export/Send Payments**` |
-| FastTab names | **Bold** | `**Direct Debit** FastTab` |
-| Column names | **Bold** | `**Banking Export Journal** column` |
-| Menu items | **Bold** | `**Home** > **Post** > **Post**` |
-| FactBox names | **Bold** | `**Line Information** FactBox` |
-
-### What gets italic
-
-| Element | Format | Example |
-|---------|--------|---------|
-| Status values | *Italic* | `*Valid*`, `*Pending Approval*` |
-| State values | *Italic* | `*Ready*`, `*Imported*` |
-
-### What gets neither
-
-- Generic terms: "field", "page", "option", "column"
-- Descriptive text and explanations
-- Product names (written in plain text: "Continia Banking", "Business Central")
-
-### Navigation breadcrumbs
-
-Format: `**Menu** > **Submenu** > **Action**`
-
-Examples:
-- `select **Home** > **Suggest Vendor/Customer/Employee Payments**`
-- `click **Prepare** > **Send Approval Request**`
-- `select **Related** > **Communication Setup**`
-- `click **Actions** > **Functions** > **Delete and set as Imported**`
-- `click **Page** > **Show More Columns** or **Show Fewer Columns**`
-
-### Search pattern
-
-Always use this exact pattern:
-```
-Search ({{search}}) for and select **[Page Name]**.
-```
-
-The `{{search}}` renders as a search icon in the final docs.
+<!-- GAP: no verbatim example available — supply from corpus (hint/callout block) -->
 
 ---
 
-## 4. Procedure Writing
+## 7. Links and cross-references
 
-### Step format
+### 7.1 Link form decision table
 
-```markdown
-## To [verb] [object]
+| Situation | Form | Example |
+|---|---|---|
+| Referencing another Continia Docs article | `For more information, see the [Article name] article.` | For more information, see the Bank reconciliation article. |
+| Referencing external Microsoft documentation | Append `(Microsoft article)` | For more information, see [Numbers](https://learn.microsoft.com/en-us/style-guide/numbers) (Microsoft article). |
+| Referencing a PDF document | Append `(PDF)` | For more information, see [Setup guide] (PDF). |
+| Referencing a Continia Learn module/lesson | In-sentence descriptive link; never under "Related information" | For more information on this, including a practical scenario, see the [Continia Learn](https://learn.continia.com/) unit on [delegating expense user tasks](https://learn.continia.com/module/set-up-users-in-EM/delegate-expense-user-tasks). |
+| Content already documented elsewhere | Link to it instead of repeating it | — |
 
-[1-2 sentence context: when/why to do this, prerequisites, or links to related articles.]
+### 7.2 Rules
 
-1. Search ({{search}}) for and select **[Page Name]**.
+- **Always use descriptive link text.** Never write "click here" or "read more here."
+  ✅ "For more information, see [name of the article]."
+  ❌ "You can read more about this here."
+- **Place conditional/reference clauses before the instruction they support, not after.**
+  ✅ "For more information, see Software lifecycle policy."
+  ❌ "See Software lifecycle policy for more information."
+- **Link instead of repeating content.** If an existing article already covers the content needed, link to it rather than restating it — this improves consistency and maintainability.
+- **Repeat the noun instead of using a pronoun** when referring back to something named earlier in the sentence.
+  ✅ "By connecting your data to the correct emission type, you can enrich your data."
+  ❌ "By connecting your data to the correct emission type, you can enrich it."
 
-2. Go to the **[Field Name]** field, select the three dots, and on the **[Page Name]** page, select a [item].
-
-3. On the action bar, select **[Menu]** > **[Action]**.
-
-4. On the **[Form Name]** form, fill in the following:
-   * **[Field Name]** - [explanation].
-   * **[Field Name]** - [explanation].
-
-5. Click **OK** to [complete the action].
-```
-
-### Step wording conventions
-
-- Start each step with an action verb: "Search", "Go to", "Select", "Enter", "Click", "On the"
-- Use "Search ({{search}}) for and select" for the first step when navigating to a page
-- Use "On the action bar, select" for menu actions
-- Use "Go to the **[Field]** field" for field navigation
-- Use "Fill in the following" or "enter the following" for multiple fields
-- Use "Click **OK**" or "Click **Next**" for button actions
-
-### Alternative access pattern
-
-When a feature can be accessed multiple ways:
-```markdown
-Search ({{search}}) for and select **Search rules**. Alternatively, on the
-**Bank Account Reconciliation** or **Payment Journal Reconciliation** page,
-select the bank statement line, and on the action bar, select **Rules** > **Add Search Rule**.
-```
-
-### Conditional steps
-
-```markdown
-5. If the newly selected bank system supports payment methods that are already
-   handled by another active system, the wizard displays the **Resolve Payment
-   Method Conflicts** page. If this page does not appear, no overlaps were
-   detected, and you can continue to the next step.
-```
-
-### Expected results
-
-State the outcome at the end of a procedure:
-```markdown
-8. Click **Finish**. After you've set up the bank account, the status in the
-   **Bank Accounts** overview will be set to *Ready*, and the bank account
-   will be ready for use.
-```
-
-### Sub-options format
-
-When a step has multiple choices:
-```markdown
-3. Go to the **Communication type** columns, select one of the following options,
-   and click **Next**:
-   * **Direct** - select this option for automated communication with Continia's
-     online solution as intermediary.
-   * **Manual** - select this option if you prefer to manually upload and
-     download payment files.
-   * **Storage Account** - select this option if your bank delivers statements
-     to an Azure Blob storage account.
-```
+<!-- GAP: no verbatim example available — supply from corpus (Related information section) -->
 
 ---
 
-## 5. Callout Boxes
+## 8. Tables and lists
 
-### Info (blue) - additional context
+### 8.1 List form decision table
 
-```markdown
-{% hint style="info" %}
-In the **Bank Acc. Reconciliation** page, imported descriptions appear in the
-**Description** field. In the **Payment Reconciliation Journal**, they appear
-in the **Transaction Text** field.
-{% endhint %}
-```
+| Element | Use when | Example |
+|---|---|---|
+| Comma-separated list | 3 or fewer items in running text | "Features include A, B, and C." |
+| Ordered list (1, 2, 3) | Steps that must happen in a specific order | Installation steps, setup tasks |
+| Unordered list (•) | Non-sequential items: features, options, capabilities | Button descriptions, settings options |
+| Table | More than 5 items, or comparing items | Reference overviews, configuration options, UI actions |
 
-### Success (green) - tips and recommendations
+<!-- GAP: no verbatim example available — supply from corpus (reference table) -->
 
-```markdown
-{% hint style="success" %}
-Consider using the Bookkeeper role for an overview of the most important
-Continia Banking features. With this role assigned, the Role Center view
-contains most tasks for handling day-to-day financial tasks.
-{% endhint %}
-```
+### 8.2 Punctuation
 
-### Danger (red) - warnings and constraints
-
-```markdown
-{% hint style="danger" %}
-You cannot add lines to a batch after sending an approval request until the
-batch is approved and posted.
-{% endhint %}
-```
-
-### When to use each
-
-- **info**: Clarifications, alternative behavior, prerequisite context
-- **success**: Best practices, recommended approaches, subscription info
-- **danger**: Critical constraints, breaking changes, version compatibility warnings
-
-### Placement rules
-- After introduction paragraphs for prerequisites/context
-- Within procedures for step-specific warnings
-- After procedures for tips about the result
-- Keep to 1-3 sentences; if longer, it's probably regular content
-
-### Canonical syntax
-
-Always use `{% hint style="..." %}`. A few older articles use GitHub-style alerts
-(`> [!NOTE]`, `> [!IMPORTANT]`); do **not** introduce these in new content — they are legacy
-and `{% hint %}` is the house standard.
+- Use the Oxford comma in comma-separated lists of 3 or more items.
+  **Example:** "raindrops on roses, whiskers on kittens, and bright copper kettles."
+- Bulleted **sentences** (complete sentences) get end punctuation.
+- Bulleted **phrases** (fragments) do not get end punctuation.
+- Within one list, be consistent: if one bullet is punctuated, punctuate all of them.
 
 ---
 
-## 6. Links and Cross-References
+## 9. Vocabulary, grammar, and phrasing
 
-### Internal article links
+### 9.1 General writing style
 
-```markdown
-[Setting up bank accounts](@CB-37)
-[Payment statuses](@CB-111)
-[The advanced payment suggestion option](@CB-145)
-```
+- **US English.** Refer to [Merriam-Webster](https://www.merriam-webster.com/) when a term is ambiguous.
+- **Active voice by default.** Use passive voice only when the actor is unknown or irrelevant to the reader.
+- **Second person.** Use "you," never "we."
+- **One term per concept.** Use the same term consistently for the same concept. Align terminology with Microsoft Business Central documentation. If this guide and Microsoft disagree, this guide's term wins.
+- **Write for a global audience.** Avoid flowery or unclear phrasing — many readers are not native English speakers, and ambiguity causes real mistakes.
+- **Less is more.** If a sentence is clear without an adverb, adjective, or extra section, remove it.
+- **Repeat nouns, avoid pronouns**, when the reference could be ambiguous (see [7.2](#72-rules)).
+- **Never start a sentence with a numeral** (see [9.4](#94-numbers)).
 
-### Section anchor links
+### 9.2 Grammar
 
-```markdown
-[View communication settings](@CB-49#view-communication-settings)
-[To request production access](#to-request-production-access)
-```
+- **Present tense.** Avoid "will" and "would."
+  ✅ "When enabled, Continia automatically assigns…"
+  ❌ "When enabled, Continia will automatically assign…"
+- **No Latin abbreviations** (e.g., i.e., etc., et al.). Restructure the sentence instead. Exception: if one must be used, follow it with a colon, not a comma.
+- **Dashes.** Do not use em dashes (—). If a dash is needed, use an en dash (–). Prefer restructuring the sentence over using a dash at all.
 
-### External links
+### 9.3 Contractions
 
-```markdown
-[Continia PartnerZone](https://partnerzone.continia.com/)
-[ABN AMRO Developer Portal](https://developer.abnamro.com/)
-```
+Use contractions from the valid list by default. Never use a contraction from the invalid list.
 
-### When to use external vs internal links
+**Valid:** You'll, Won't, It's, Can't, It'll, You're, That's, Aren't, Hasn't, Doesn't, Haven't, Don't
 
-**Internal `@CB-###` is the default.** Use it for everything that lives inside the Continia
-Banking documentation set. Never link to another doc article with a raw URL.
+**Invalid:** There'd, They'd, You'd, It'd, Ain't
 
-**Use an external link only when the target is outside the docs set.** Typical, legitimate cases:
+### 9.4 Numbers
 
-| Use an external link for... | Example |
-|-----------------------------|---------|
-| Bank / provider developer portals and onboarding pages | `[ABN AMRO Developer Portal](https://developer.abnamro.com/)`, `[Danske Bank Erhverv website](https://danskebank.dk/erhverv)` |
-| Microsoft Business Central / Learn documentation | `[Update currency exchange rates (Microsoft article)](https://learn.microsoft.com/...)` |
-| Continia PartnerZone / Zendesk (partner-only resources) | `[this page](https://continia.zendesk.com/hc/...)` — always note "(only available to partners)" |
-| Continia marketing / pricing pages | `[Continia Pricing](https://www.continia.com/pricing/)` |
-| Payment Service Provider docs | `[Settlement details report](https://docs.adyen.com/...) article on Adyen Docs` |
-| Standards bodies / specs / concept references | `[Extended SEPA Character Set](https://www.europeanpaymentscouncil.eu/...)` |
+| Rule | Example |
+|---|---|
+| Spell out whole numbers zero through ten | "non-zero possibility"; "three options" |
+| Use numerals for 11 and greater | "12 days of Christmas" |
+| If one item in a list needs a numeral, use numerals for every item in that list | "9 ladies dancing, 10 lords a-leaping, 11 pipers piping" |
+| If two numbers referring to different things appear together, use a numeral for one and spell out the other, regardless of the general rule | "six 80-liter tanks" |
+| Never start a sentence with a numeral | — |
 
-Phrase Microsoft links with the "(Microsoft article)" suffix in the link text. Flag
-partner-only resources explicitly. Prefer an internal `@CB-###` article over an external link
-whenever the same information exists inside the docs set.
+For more number-related guidelines, see [Numbers](https://learn.microsoft.com/en-us/style-guide/numbers) (Microsoft article).
 
-### Cross-reference phrasing
+### 9.5 Dates
 
-Use these patterns to introduce links:
+Body text uses the American date format: Month Day, Year. **Example:** "July 4, 1776." Exception: the `date` field in metadata uses `dd-mm-yyyy` (see [Section 1](#1-frontmatter-and-metadata)).
 
-```
-For more details, see [Link text](@CB-###).
-For more information on [topic], read the [Link text](@CB-###) article.
-To learn more about [topic], refer to the [Link text](@CB-###) article.
-See [Link text](@CB-###) for more information.
-```
+### 9.6 Plurals
 
-### Related information section
+Do not append "(s)" to indicate a term may be singular or plural — it complicates localization.
+✅ "Your Continia solutions"
+❌ "Your Continia solution(s)"
 
-Always at the end, before any `<style>` blocks:
+If both singular and plural must be indicated explicitly, use "one or more."
+**Example:** "To add one or more rows or columns to a table…"
 
-```markdown
-## Related information
+### 9.7 Redundancy
 
-[Article 1](@CB-###)
-[Article 2](@CB-###)
-[Article 3](@CB-###)
-```
+**Filler words to drop:**
 
-Links are separated by line breaks (two trailing spaces or blank lines). No bullets.
+| Redundant phrase | Preferred |
+|---|---|
+| (in order) to | to |
+| whether (or not) | whether |
+| (you can) select | select |
 
----
+**Pleonasms to avoid:** "create new" → "create"; "specify exactly" → "specify"; "add additional" → "add".
 
-## 7. Tables
+**Adverbs to avoid:** "easily," "just," "quickly," "simply." Remove them if the sentence is clear without them.
 
-### Two-column field reference table
+**Exclamation marks:** never use them.
 
-```markdown
-| Field | Description |
-| ----- | ----------- |
-| CSV Separator | Enter the separator type used in the CSV file. |
-| Delimiter | Delimiters are used when field values contain the separator character. |
-| Date Format | Enter the date format used in the CSV file. |
-```
+**All caps:** never reproduce a UI element's all-caps styling in text — convert to sentence case. Exception: codes (for example, `EMPL-RECON`, `PURCHASE`), which keep their all-caps form (see [5.1](#51-what-gets-bold)).
 
-### Three-column credential/info table
+### 9.8 Miscellaneous terms
 
-```markdown
-| Item | Description | Location |
-| ---- | ----------- | -------- |
-| TLS certificate | .crt file containing the TLS certificate. | Received from the certificate provider. |
-| Private key | .txt file containing the private key. | Received from the certificate provider. |
-```
-
-### Changelog table
-
-```markdown
-| Functional Area | Description | ID |
-| --------------- | ----------- | -- |
-| General Application | Scanning for unverified bank accounts is now significantly faster. | 75520 |
-| Payment Export | Fixed an issue where payment files were not exported correctly. | 74625 |
-```
-
-### Status/feature table
-
-```markdown
-| Status | Description |
-| ------ | ----------- |
-| Amount Adjusted | The bank has finalized the payment with a different amount. |
-| Approved | The payment has been approved by the designated approver. |
-| Exported to file | Payment exported manually; final status for manual communication. |
-```
-
-### Table column width styling
-
-Add at the bottom of the article when tables need column width control:
-
-```html
-<style>
- .content table tr td:nth-child(1) {
- width: 220px;
- }
- .content table tr td:nth-child(2) {
- width: 580px;
- }
-</style>
-```
-
-### Footnotes in tables
-
-```markdown
-| File format<a href="#footnote-1"><sup>1</sup></a> | Used for |
-| --- | --- |
-| ISO PAIN.001 | Sending payments from the **Payment Journal**. |
-
-<small style>
-<div class="footnotes">
-  <hr />
-  <ol>
-    <li id="footnote-1">Footnote text here.</li>
-  </ol>
-</div>
-</small>
-```
+| Term | Rule |
+|---|---|
+| eBilling, eDocument, eInvoicing, eOrder | No hyphen; lowercase "e" followed by an uppercase letter |
+| email | Not "e-mail," unless the target localization language uses the hyphen |
+| ID | Not "id" or "Id," unless the target localization language spells it differently |
+| once | Never use as a synonym for "when" or "after" |
+| on premises / on-premises | Without hyphen = adverb ("Business Central on premises is also a digital bookkeeping system"). With hyphen = adjective ("If you choose on-premises OCR"). In article titles, always use the hyphenated form for consistency. |
+| postal code | Use "postal code," not "postcode" or "post code" |
+| into / in to | Import data **from** somewhere **into** somewhere else. Log **in to** something (two words). |
 
 ---
 
-## 8. Vocabulary and Phrasing
+## 10. Sentence-pattern library
 
-### Action verbs for instructions
+Copy-paste patterns for common article moments.
 
-| Verb | When to use |
-|------|-------------|
-| Search | Opening a page via search: `Search ({{search}}) for and select` |
-| Select | Choosing an item from a list or dropdown |
-| Click | Pressing a button: `Click **OK**`, `Click **Next**` |
-| Enter | Typing a value into a field |
-| Go to | Navigating to a specific field or page section |
-| Fill in | Completing multiple fields |
-| On the action bar, select | Accessing menu actions |
-
-### Descriptive verbs for link descriptions
-
-- "overview of..." / "general overview of..."
-- "step-by-step instructions for..."
-- "guidance on..."
-- "learn how to..."
-- "describes exactly what..."
-- "explains how to..."
-
-### Prerequisite phrasing
-
-```
-The lines must have the status *Valid* before you can send them for approval.
-You can only send or export payment lines with the status *Valid* or *Approved*.
-Before creating a direct debit payment suggestion, you need to enable the feature.
-```
-
-### Conditional phrasing
-
-```
-Depending on your bank, additional steps may be required.
-If a bank statement imports but does not appear, the account may not match.
-Optionally, you can use templates to save specific filter settings.
-```
-
-### Consequence/result phrasing
-
-```
-The line status changes to *Pending Approval*.
-The status will be updated to *Sent* for exported payments.
-After you've set up the bank account, the status will be set to *Ready*.
-```
-
-### Include directives
-
-For shared content blocks:
-```
-{{include "template-name" "Banking"}}
-```
-
-### Template variables
-
-- `{{search}}` - renders as search icon
-- `{{checkmark}}` - renders as a checkmark symbol in tables
+- Cross-reference to another article:
+  `For more information, see the [article name] article.`
+- Introducing a reference table:
+  `The following table describes…`
+- Naming a UI container in a sentence:
+  `In the [**UI element**] window, on the [**UI element**] FastTab, on the [**UI element**] page, on the [**UI element**] card, in the [**UI element**] dropdown menu.`
+- Action bar sequence:
+  `On the action bar, click [**UI element**] > [**another UI element**].`
+- Procedure opener using Search:
+  `Search ({{search}}) for and select **[Page]**.`
+- Menu path / sequence:
+  `**A** > **B** > **C**` (space before and after each bracket; bracket itself is never bold)
+- Procedure introductory sentence:
+  `To [do the task]:`
+- Icon used inline (always parenthesized):
+  `Search ({{search}}) for and select **Continia Solution Management**.`
+- Toggle instruction:
+  `To keep all applied filters, enable the **Pass all filters** toggle.`
+- Continia Learn cross-reference:
+  `For more information on this, including a practical scenario, see the [Continia Learn](https://learn.continia.com/) unit on [delegating expense user tasks](https://learn.continia.com/module/set-up-users-in-EM/delegate-expense-user-tasks).`
 
 ---
 
-## 9. TOC File Format
+## 11. Images, media, and template variables
 
-Plain text file named `toc.txt` in each directory.
+### 11.1 Images
 
-**Format:** `filename | Display Name` (one entry per line)
+Two ways to add an image; both support alt text, but only HTML lets the image link to itself.
 
+**Markdown:**
 ```
-Overview.md | Overview
-Setting up payment export.md | Setting up payment export
-Managing payments | Managing payments
-Payment Approval | Security
+![The Moon](https://xaznkhxfsb.cloudimg.io/Docs/Moon.jpg)
+```
+
+**HTML (self-linking):**
+```
+<a href="/images/DC/eDocuments/eDocuments advanced ordering - scenario A.jpg" target="_blank"> <img src="/images/DC/eDocuments/eDocuments advanced ordering - scenario A.jpg" alt="eDocuments advanced ordering - scenario A"> </a>
 ```
 
 **Rules:**
-- `.md` files include the extension
-- Directories do NOT include an extension
-- Display names can differ from filenames
-- One blank line at end of file
-- Order determines navigation order
+- The CDN is case-sensitive. Image URLs must match the exact filename case as stored.
+  ✅ `https://xaznkhxfsb.cloudimg.io/Docs/Moon.jpg`
+  ❌ `https://xaznkhxfsb.cloudimg.io/Docs/Moon.JPG` / `https://xaznkhxfsb.cloudimg.io/docs/moon.jpg`
+- Default: avoid screenshots — they reduce long-term maintainability. Exception: use a screenshot when it is genuinely necessary to understand the information.
+- Images support the text; they never replace it.
+- Format: PNG.
+- Always provide alt text (accessibility and fallback if the image fails to load).
+- Filename: hyphenate words and include a timestamp.
+  **Example:** `Sales-orders-outstanding-orders-20230601.png`
+
+### 11.2 Videos
+
+```
+{% embed url="https://player.vimeo.com/video/[video-id]?h=[hash]&badge=0&autopause=0&player_id=0&app_id=[app-id]" %}
+```
+
+### 11.3 Walkthrough embeds (Storylane)
+
+```
+<script async src="https://js.storylane.io/js/v2/storylane.js"></script>
+
+<div style="width:100%;aspect-ratio:16/9;">
+  <iframe
+    src="https://app.storylane.io/demo/[demo-id]?embed=popup"
+    style="width:100%;height:100%;border:0;border-radius:10px;"
+    allowfullscreen
+  ></iframe>
+</div>
+```
+
+### 11.4 Icons
+
+Insert an icon by name inside double curly brackets. When used inline in a sentence, always enclose the icon in parentheses.
+
+- Checkmark — `{{checkmark}}`
+- Cross — `{{cross}}`
+- Horizontal dots (more information) — `{{horizontal-dots}}`
+- Search — `{{search}}`
+- Settings — `{{settings}}`
+- Vertical dots (more information) — `{{vertical-dots}}`
+
+**Example:** `Search ({{search}}) for and select **Continia Solution Management**.`
+
+### 11.5 Reusable content (includes)
+
+To reference an existing reusable content block (an include) in an article body, use:
+
+```
+{% file src="[relative path to include, e.g. ../../.gitbook/includes/name-of-include]" %}[display text]{% endfile %}
+```
+
+The number of `../` segments depends on how many folder levels separate the current article from the includes folder — adjust it to match the article's actual location.
+
+<!-- GAP: the human guide illustrates this syntax with a screenshot rather than text; the pattern above is inferred from the guide's own use of `{% file src="..." %}...{% endfile %}` elsewhere in its text. Confirm against a real corpus example if available. -->
 
 ---
 
-## 10. Sentence Patterns
+**Conversion report**
 
-### Introduction patterns
+- **Dropped content:**
+  - Human guide's own frontmatter/title/date/version and opening self-description paragraph ("This style guide is a reference tool for technical writers and translators…") — meta-commentary about the guide itself, not a documentation rule.
+  - Reference to "There's a dedicated style guide for changelogs" — points to a separate document not supplied as input; out of scope for this converter run.
+  - Info hint "If you encounter a case that has yet to be covered by this style guide, discuss it with the other technical writers…" — team-process content.
+  - "For titles, only add 'Continia' before the solution name when there is enough space." — subjective, non-deterministic judgment call with no measurable threshold; replaced with the deterministic default in 5.5 ("do not include 'Continia' unless the solution requires the full name on every mention").
+  - "To create reusable content in GitBook" (12-step procedure), "To edit reusable content in GitBook," and "To add reusable content in GitBook" (block-insertion menu steps) — authoring-tool (GitBook UI) workflows; human input mechanics (hovering, clicking, six-dot menu, merging).
+  - `<kbd>Alt</kbd> + 0150` instruction for typing an en dash — keyboard/input mechanic; the underlying rule ("use en dash, never em dash") is retained in 9.2.
+  - `<kbd>Esc</kbd>` select-all instruction inside the GitBook reusable-content procedure — human input mechanic, dropped with its parent procedure.
+  - Localization/Marketing-involvement consideration for graphics ("before adding graphics, consider the need to localize them… does it require Marketing's involvement?") — team-process/localization-mechanics content that does not constrain the English markdown the agent writes.
+  - Article-IDs spreadsheet lookup mechanics ("choose the next ID in line from the Article IDs spreadsheet… select the sheet for the relevant product") — team-process bookkeeping; the underlying rule (IDs are sequential per product prefix) is retained in Section 1.
+  - FAQ "Regular updates" bullet (removing outdated questions, adding new ones over time) — ongoing editorial-maintenance workflow, not a single-article writing directive.
+  - Illustrative "see also" pointers to specific real published examples: Microsoft's UI search-filter FAQ page, PM's reconciliation FAQ and troubleshooting/FAQ folder examples, and the "live example" test article link under Callouts — human-reader pointers to existing docs, not actionable rules for the agent.
+  - "Detailed changelog for [product name]: Lorem ipsum dolor sit amet." under Reference article guidelines — unfinished placeholder stub in the source, contains no rule content.
 
-**Problem statement (for conceptual articles):**
-> Reconciling book entries with bank statements is an essential task in financial management, but it can also be demanding.
+- **Regenerated vs. preserved:** not applicable — no `EXISTING_AGENT_GUIDE` was supplied, so the entire file was generated fresh from `HUMAN_GUIDE`. No merge was performed.
 
-**Capability statement (for feature articles):**
-> Continia Banking offers multiple options for exchanging financial data between your bank and Business Central.
+- **Conflicts:**
+  - `<!-- CONFLICT -->` in Section 6.2: the human guide's Callouts/Considerations subsection gives contradictory claims about whether ordered-list-inside-unordered-list and unordered-list-inside-ordered-list nesting works inside a callout ("It didn't use to work, but now it does" vs. the general best practice to avoid lists in callouts). Resolved by keeping the "no lists inside callouts" default as authoritative; flagged for human review.
 
-**Enhancement statement (comparing to standard BC):**
-> Continia Banking enhances the standard direct debit functionality in Business Central by enabling users to view and manage customer direct debit suggestions.
+- **Gaps:**
+  - `<!-- GAP -->` in Section 1: permalink solution code for Continia Finance (CF) is not listed among the given permalink examples (cb, cm, dc, do, em, copp, pm).
+  - `<!-- GAP -->` in Section 2.1: no explicit FAQ article title pattern is given in the human guide.
+  - `<!-- GAP -->` in Sections 2.2, 2.3/2.4 (implied), 2.5, 2.6, 2.7: no verbatim example available for procedural, conceptual/overview, reference, walkthrough, and FAQ article types (no `DOCS_CORPUS` supplied).
+  - `<!-- GAP -->` in Section 4: no verbatim example available for a real procedure block.
+  - `<!-- GAP -->` in Section 6: no verbatim example available for a real hint/callout block.
+  - `<!-- GAP -->` in Section 7: no verbatim example available for a real "Related information" section.
+  - `<!-- GAP -->` in Section 8.1: no verbatim example available for a real reference table.
+  - `<!-- GAP -->` in Section 11.5: the human guide's reusable-content include syntax was shown only as a screenshot image, not as text; the syntax given here is inferred from the guide's own use of `{% file src="..." %}...{% endfile %}` in its introductory paragraph. Confirm against real source files if a corpus becomes available.
 
-**Scope statement (for overview/index):**
-> This overview article guides you to the resources available for using the **Payment Reconciliation Journal**.
+- **Source defects fixed:**
+  - Removed a duplicated rule: "Repeating a noun is preferable to replacing it with a pronoun" appeared twice in the General Guidelines list (once run into the end of the "Write conditional clauses before instructions" bullet, once as its own bullet). Kept one copy, in Section 7.2, and separated it cleanly from the conditional-clause rule (Section 7.2/9.1).
+  - Corrected "ﬁ" ligature OCR/encoding artifacts throughout the rewritten prose (e.g., "deﬁnitions" → "definitions," "speciﬁc" → "specific," "ﬁle" → "file," "workﬂow" → "workflow").
+  - Repaired line-wrapped/broken URLs encountered in dropped illustrative examples (spaces inside "continia-payment- management," "getting- started," and "ui- search-filter-faq"); since the surrounding content was dropped as non-actionable reference pointers (see Dropped content), the corrected URLs were not carried into the output, but the defect is logged here per the sanitize requirement.
 
-**Developer audience statement:**
-> This section provides guidance for developers, IT consultants, and technically minded users who want to customize or extend Continia Banking.
-
-### Closing/transition patterns
-
-> For more details, see [article](@CB-###).
-> To learn more about [topic], refer to the [article](@CB-###) article.
-> Once enabled, the system will prefill related fields during payment processing.
-> This action can be reversed on the **Bank Transactions** page.
-
----
-
-## 11. Images, Media, and Template Variables
-
-### Screenshots and images
-
-```markdown
-![Alt text describing the screenshot](/images/CB/filename.png)
-```
-
-- Image files live under `/images/CB/` (the Continia Banking image folder).
-- Always provide meaningful alt text.
-- Reference UI icons inline with template variables, not images, where one exists
-  (e.g. `{{search}}` for the search icon).
-
-### Video embeds
-
-```markdown
-{% embed url="https://player.vimeo.com/video/1060111157?h=..." %}
-```
-
-Use for walkthrough/overview videos, typically near the top of overview or onboarding articles.
-
-### Template variables
-
-- `{{search}}` - renders as the search icon, used in `Search ({{search}}) for and select ...`.
-- `{{checkmark}}` - renders as a checkmark symbol, used in capability/feature tables.
-
-### Include directives
-
-For shared, reused content blocks:
-
-```markdown
-{{include "template-name" "Banking"}}
-```
+- **Corpus discrepancies:** not applicable — no `DOCS_CORPUS` was supplied for this run.

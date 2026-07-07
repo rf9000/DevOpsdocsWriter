@@ -12,7 +12,7 @@ const hasCreds =
   !!process.env.AZURE_DEVOPS_PAT &&
   !!process.env.AZURE_DEVOPS_ORG &&
   !!process.env.AZURE_DEVOPS_PROJECT &&
-  !!process.env.TARGET_REPO_PATH &&
+  (!!process.env.TARGET_REPO_PATH || !!process.env.TARGET_REPO_PATH_CB) &&
   !!process.env.DOCS_REPO_PATH;
 
 const maybe = hasCreds ? describe : describe.skip;

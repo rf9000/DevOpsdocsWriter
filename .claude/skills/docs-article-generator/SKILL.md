@@ -1,7 +1,7 @@
 ---
 name: docs-article-generator
 description: >-
-  Generate a complete Continia Banking documentation article from a code change. Given a git
+  Generate a complete Continia documentation article from a code change. Given a git
   diff, an Azure DevOps work item, staged changes, or a feature name, it reconstructs the
   COMPLETE feature flow from the AL codebase using LSP (findReferences, incoming/outgoingCalls,
   goToDefinition, documentSymbol, hover) - not just the changed lines - maps AL captions to the
@@ -11,7 +11,7 @@ description: >-
   For hand-writing without code, use docs-writer; for validation only, use docs-validator.
 ---
 
-# Continia Banking Docs Article Generator
+# Continia Docs Article Generator
 
 Produce a complete, publishable documentation article from a code change. The article documents
 the **whole feature as the user experiences it**, seeded by (but not limited to) the diff.
@@ -21,9 +21,11 @@ code→docs path — understanding the change, reconstructing the full feature f
 classifying it, and choosing placement — then delegates **drafting to `docs-writer`** and
 **validation to `docs-validator`**. This keeps house style in exactly one place.
 
-Output target: `C:\GeneralDev\continia.docs.articles\en-us\Continia Banking\` (mirror the site
-structure). The AL→docs mapping and the feature-flow method are in `references/code-to-docs.md`
-(read it before starting); house style lives in `../docs-writer/references/style-guide.md` and is
+Output target: the output path from the run instructions (backed by `OUTPUT_DIR` in the
+docsWriter repo's `.env`). Mirror the site structure of the published docs set — the repo
+configured as `DOCS_REPO_PATH` in `.env` — which is read-only reference. The AL→docs mapping and the feature-flow method are in `references/code-to-docs.md`
+(read it before starting); house style lives in `../docs-writer/references/style-guide.md` (authoritative base) plus
+`../docs-writer/references/style-guide-supplement.md` (docs-site mechanics and templates) and is
 applied by `docs-writer` during drafting.
 
 ## Workflow
@@ -61,21 +63,22 @@ applied by `docs-writer` during drafting.
      article, an *uncertain* match, or a genuinely new sub-topic. Scale its depth to the magnitude.
    - **Delta update** — a CONFIDENT match to an existing article that this change extends, **or** a
      minor change with a plausible existing home (§6 "Magnitude tilts the call"). Produce an update
-     note targeting that article's existing `CB-###` instead of a near-duplicate (§6 gives the
+     note targeting that article's existing `<PREFIX>-###` id instead of a near-duplicate (§6 gives the
      confident-vs-uncertain criteria and the delta-note format).
    - **Changelog entry** — a pure bug fix / internal refactor with no user-visible change.
    Match on shared UI captions / the same page or setup object, not title wording. In an
    unattended run, state the classification in the work-item comment (and add a "may overlap
-   CB-### — consider merging" note when you fell back to a new article from an uncertain match);
+   <PREFIX>-### — consider merging" note when you fell back to a new article from an uncertain match);
    interactively, state it to the user.
 
 4. **Choose the article type and location.** Use the "Choosing the article type" guide and the
    change-type heuristics. Pick the target folder, read 2-3 sibling articles for tone, and
    locate the folder's `toc.txt`.
 
-5. **Get the article id.** For a **new article**, take the next unused `CB-###` (in an unattended
-   run, the highest existing `CB-` number in the docs set + 1; interactively, ask the user). For a
-   **delta update**, reuse the existing article's `CB-###` — do not mint a new one. Optionally grep
+5. **Get the article id.** Ids use the product's prefix (`CB`, `DC`, `EM`, ... — given per run).
+   For a **new article**, take the next unused `<PREFIX>-###` (in an unattended run, the highest
+   existing `<PREFIX>-` number in the product's docs folder + 1; interactively, ask the user). For a
+   **delta update**, reuse the existing article's `<PREFIX>-###` — do not mint a new one. Optionally grep
    the docs set to confirm a new id is unused.
 
 6. **Draft via `docs-writer`.** Do not re-derive house style here — `docs-writer` is the single
@@ -86,11 +89,11 @@ applied by `docs-writer` during drafting.
    - the **confirmed impact answers** (§4) so the intro frames problem/when-useful from sourced
      facts — and an explicit note of which impact answers are unknown, so the writer does **not**
      invent them,
-   - the `CB-###` id,
+   - the `<PREFIX>-###` id,
    - the reconstructed feature flow (prerequisites → setup/fields → actions → results → related),
    - the caption→UI-name mapping from `references/code-to-docs.md` so it bolds real captions and
      italicizes real statuses (never AL identifiers),
-   - candidate `@CB-###` cross-links and any legitimate external links.
+   - candidate `@<PREFIX>-###` cross-links and any legitimate external links.
    `docs-writer` produces the article file in its own style.
 
 7. **Validate.** For a **new article**, run the `docs-validator` skill on the new file — it runs

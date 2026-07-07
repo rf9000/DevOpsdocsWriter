@@ -80,8 +80,16 @@ export interface DocsContext {
   discoveredSkills: DiscoveredSkill[];
   /** Absolute path the agent must write the finished article to. */
   outputPath: string;
-  /** Absolute path to the published docs set (read-only) the agent scans for existing articles + the next CB-id. */
+  /**
+   * Absolute path to the resolved product's folder inside the published docs
+   * set (read-only), e.g. `<DOCS_REPO_PATH>/en-us/Continia Banking`. The agent
+   * searches ONLY this folder for existing articles + the next article id.
+   */
   docsRepoPath: string;
+  /** Resolved product name (docs folder name), e.g. "Continia Banking". */
+  productName: string;
+  /** The product's article-id prefix, e.g. "CB". */
+  idPrefix: string;
 }
 
 /**
@@ -245,12 +253,13 @@ export function buildSystemPrompt(
   sections.push(
     `## Output and automation rules\n\n` +
       `- This is an UNATTENDED run. NEVER ask the user a question or wait for input — make the best decision and proceed.\n` +
-      `- The published docs set is at \`${context.docsRepoPath}\`. Read it with Read/Grep/Glob to find existing articles and the highest \`CB-\` id. It is READ-ONLY — never write into it.\n` +
+      `- This work item belongs to the product **${context.productName}** (article-id prefix \`${context.idPrefix}\`).\n` +
+      `- The published docs set for ${context.productName} is at \`${context.docsRepoPath}\` — this is the product's own folder. Read it with Read/Grep/Glob to find existing articles, related articles, and the highest \`${context.idPrefix}-\` id. Search ONLY inside this folder; never scan other products' folders. It is READ-ONLY — never write into it.\n` +
       `- **Size and frame before classifying.** First assess the change MAGNITUDE (minor tweak / workflow improvement / new feature / technical addition) and answer the IMPACT BRIEF (problem solved, what the user can now do, when noticed, before vs. now, where in the UI, config needed). See \`docs-article-generator\` → \`code-to-docs.md\` §3 (magnitude → depth) and §4 (impact brief). The magnitude caps how much you write — a couple of new fields is NOT a full multi-section article — and tilts the call toward an update. Keep the output PROPORTIONAL: section count should track what the user actually has to understand or do; never add explainer sections, reference tables, or extra hints to pad a small change.\n` +
       `- **Classify.** Reconstruct the feature and its user-facing UI captions from the changed AL objects, then search the docs set for an existing article that already covers it — anchor the match on shared UI captions / the same page or setup object, NOT on title similarity. Then choose exactly one output (see \`code-to-docs.md\` §6):\n` +
-      `  - **update** — a CONFIDENT match exists AND this change extends what that article already covers, OR the change is a MINOR tweak with a plausible existing home (for a small change, prefer an update over a new file). Produce a DELTA NOTE targeting that article's existing \`CB-###\`; do NOT mint a new id.\n` +
+      `  - **update** — a CONFIDENT match exists AND this change extends what that article already covers, OR the change is a MINOR tweak with a plausible existing home (for a small change, prefer an update over a new file). Produce a DELTA NOTE targeting that article's existing \`${context.idPrefix}-###\`; do NOT mint a new id.\n` +
       `  - **changelog** — a pure bug fix / internal refactor with no user-visible change. Produce a changelog entry, not an article.\n` +
-      `  - **newfeature** — no match, OR an uncertain match on a SUBSTANTIAL change, OR a genuinely new sub-topic. Draft a new article scaled to the magnitude (a minor change with no existing home is ONE tight section, not a multi-section build-up) and AUTO-SELECT the next unused \`CB-###\` (highest existing \`CB-\` number + 1). When you fall back here from an UNCERTAIN match, name the most likely existing article in the work-item comment as "may overlap CB-### — consider merging instead".\n` +
+      `  - **newfeature** — no match, OR an uncertain match on a SUBSTANTIAL change, OR a genuinely new sub-topic. Draft a new article scaled to the magnitude (a minor change with no existing home is ONE tight section, not a multi-section build-up) and AUTO-SELECT the next unused \`${context.idPrefix}-###\` (highest existing \`${context.idPrefix}-\` number + 1). When you fall back here from an UNCERTAIN match, name the most likely existing article in the work-item comment as "may overlap ${context.idPrefix}-### — consider merging instead".\n` +
       `- **Impact is NOT in the code.** Why the feature matters, what problem it solves, when a user notices it, and what the system did before live in the work item / comments / PR. State impact in the article ONLY when sourced there — never manufacture a plausible "why" or before/after to enrich the intro (that is the filler to avoid). When impact is not sourced, keep the intro minimal and list the unanswered questions under "Context needed from author/SME" in the work-item comment.\n` +
       `- **Frontmatter:** a new article MUST open with a fenced \`\`\`meta\`\`\` block (GitBook format) in field order title, date, description, id, lang — NEVER a \`--- ... ---\` YAML block. Older sibling articles still using \`---\` are mid-migration; reading one for tone does NOT license copying its legacy frontmatter.\n` +
       `- You MUST use the \`Write\` tool to save the FINAL output to EXACTLY this absolute path: \`${context.outputPath}\`. The file is the deliverable; drafting it only in your message is a FAILED run. Do not end your turn until that file exists.\n` +
@@ -261,7 +270,7 @@ export function buildSystemPrompt(
       `  \`\`\`\n` +
       `  <<<DOCS-OUTPUT-KIND>>>\n` +
       `  kind: newfeature | update | changelog\n` +
-      `  target: CB-### (include only when kind is update)\n` +
+      `  target: ${context.idPrefix}-### (include only when kind is update)\n` +
       `  <<<END-DOCS-OUTPUT-KIND>>>\n` +
       `  \`\`\`\n` +
       `- Finish with the \`docs-validator\` verdict (when run) and a one-line summary of what the output covers.`,

@@ -25,8 +25,11 @@ Options:
 
 Environment variables (see .env.example):
   AZURE_DEVOPS_PAT/ORG/PROJECT   Azure DevOps connection (required)
-  TARGET_REPO_PATH               AL source repo the agent searches (required)
+  TARGET_REPO_PATH_<PREFIX>      Per-product AL source repos, e.g. TARGET_REPO_PATH_CB
+                                 (at least one required; legacy TARGET_REPO_PATH = CB)
   DOCS_REPO_PATH                 continia.docs.articles repo (required)
+  PRODUCT_FIELD                  Work item field that identifies the product
+                                 (default: System.AreaPath)
   WRITE_DOCS_TAG                 Tag that triggers documentation (default: write-docs)
   OUTPUT_DIR                     Where the article is written (default: .output)
   SKILLS_SOURCE_DIR              docsWriter's skills (default: .claude/skills)

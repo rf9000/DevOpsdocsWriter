@@ -5,8 +5,10 @@ const envSchema = z.object({
   AZURE_DEVOPS_PAT: z.string().min(1, "AZURE_DEVOPS_PAT is required"),
   AZURE_DEVOPS_ORG: z.string().min(1, "AZURE_DEVOPS_ORG is required"),
   AZURE_DEVOPS_PROJECT: z.string().min(1, "AZURE_DEVOPS_PROJECT is required"),
-  TARGET_REPO_PATH: z.string().min(1, "TARGET_REPO_PATH is required"),
+  /** Legacy single-product form; treated as TARGET_REPO_PATH_CB when that is absent. */
+  TARGET_REPO_PATH: z.string().optional(),
   DOCS_REPO_PATH: z.string().min(1, "DOCS_REPO_PATH is required"),
+  PRODUCT_FIELD: z.string().default("System.AreaPath"),
   WRITE_DOCS_TAG: z.string().default("write-docs"),
   DOCS_WRITTEN_TAG: z.string().default("Docs-Article-Written"),
   OUTPUT_DIR: z.string().default(".output"),
@@ -33,12 +35,33 @@ export function loadConfig(
 
   const parsed = result.data;
 
+  // Per-product AL source repos: TARGET_REPO_PATH_<PREFIX> (e.g. TARGET_REPO_PATH_CB,
+  // TARGET_REPO_PATH_DC). The legacy single TARGET_REPO_PATH maps to CB (Continia
+  // Banking, the original product) when TARGET_REPO_PATH_CB is not set explicitly.
+  const targetRepoPaths: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env)) {
+    const match = /^TARGET_REPO_PATH_([A-Z][A-Z0-9]*)$/.exec(key);
+    if (match?.[1] && value) targetRepoPaths[match[1]] = value;
+  }
+  if (!targetRepoPaths["CB"] && parsed.TARGET_REPO_PATH) {
+    targetRepoPaths["CB"] = parsed.TARGET_REPO_PATH;
+  }
+  if (Object.keys(targetRepoPaths).length === 0) {
+    throw new Error(
+      "Invalid configuration:\n  - TARGET_REPO_PATH_<PREFIX>: at least one per-product AL repo is required (e.g. TARGET_REPO_PATH_CB), or the legacy TARGET_REPO_PATH.",
+    );
+  }
+  const defaultTargetRepoPath =
+    targetRepoPaths["CB"] ?? Object.values(targetRepoPaths)[0]!;
+
   return {
     org: parsed.AZURE_DEVOPS_ORG,
     orgUrl: `https://dev.azure.com/${parsed.AZURE_DEVOPS_ORG}`,
     project: parsed.AZURE_DEVOPS_PROJECT,
     pat: parsed.AZURE_DEVOPS_PAT,
-    targetRepoPath: parsed.TARGET_REPO_PATH,
+    targetRepoPath: defaultTargetRepoPath,
+    targetRepoPaths,
+    productField: parsed.PRODUCT_FIELD,
     docsRepoPath: parsed.DOCS_REPO_PATH,
     outputDir: parsed.OUTPUT_DIR,
     skillsSourceDir: parsed.SKILLS_SOURCE_DIR,

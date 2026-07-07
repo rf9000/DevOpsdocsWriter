@@ -15,6 +15,7 @@ function makeDeps(overrides: Partial<WatcherDeps> = {}): WatcherDeps {
     ),
     removeTagFromWorkItem: mock(() => Promise.resolve()),
     addTagToWorkItem: mock(() => Promise.resolve()),
+    addWorkItemComment: mock(() => Promise.resolve({})),
     ...overrides,
   };
 }
@@ -112,6 +113,67 @@ describe('runPollCycle', () => {
     expect(result.documented).toBe(2);
     expect(result.skipped).toBe(1);
     expect(deps.processDocsItem).toHaveBeenCalledTimes(2);
+  });
+
+  test('posts the product-resolution comment once, keeps the tag, and does not repeat it', async () => {
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([300])),
+      processDocsItem: mock(() =>
+        Promise.resolve({
+          itemId: 300,
+          documented: false,
+          error: 'unmapped',
+          productIssue: 'could not map area path "X" to a product',
+        }),
+      ),
+      addWorkItemComment,
+    });
+
+    // First cycle: comment posted, tag kept, item not marked processed.
+    let result = await runPollCycle(mockConfig(), store, deps);
+    expect(result.errors).toBe(1);
+    expect(addWorkItemComment).toHaveBeenCalledTimes(1);
+    const html = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(html).toContain('could not map area path');
+    expect(deps.removeTagFromWorkItem).toHaveBeenCalledTimes(0);
+    expect(store.isProcessed(300)).toBe(false);
+
+    // Second cycle: same failure, but the comment is NOT posted again.
+    result = await runPollCycle(mockConfig(), store, deps);
+    expect(result.errors).toBe(1);
+    expect(addWorkItemComment).toHaveBeenCalledTimes(1);
+  });
+
+  test('dry-run does not post the product-resolution comment', async () => {
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([300])),
+      processDocsItem: mock(() =>
+        Promise.resolve({
+          itemId: 300,
+          documented: false,
+          error: 'unmapped',
+          productIssue: 'could not map',
+        }),
+      ),
+      addWorkItemComment,
+    });
+    await runPollCycle(mockConfig({ dryRun: true }), store, deps);
+    expect(addWorkItemComment).toHaveBeenCalledTimes(0);
+  });
+
+  test('an ordinary failure without productIssue posts no comment', async () => {
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([300])),
+      processDocsItem: mock(() =>
+        Promise.resolve({ itemId: 300, documented: false, error: 'agent crashed' }),
+      ),
+      addWorkItemComment,
+    });
+    await runPollCycle(mockConfig(), store, deps);
+    expect(addWorkItemComment).toHaveBeenCalledTimes(0);
   });
 
   test('a thrown error in processing is counted, not fatal', async () => {

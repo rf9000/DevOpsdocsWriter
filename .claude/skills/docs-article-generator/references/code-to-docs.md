@@ -2,7 +2,8 @@
 
 How to turn an AL code change into a complete, user-facing documentation article. This file is
 the generator's *delta* — it does not repeat house style (that lives in
-`../docs-writer/references/style-guide.md`).
+`../docs-writer/references/style-guide.md`, the authoritative base, plus
+`../docs-writer/references/style-guide-supplement.md` for docs-site mechanics and templates).
 
 ## Table of contents
 - [1. Reconstruct the complete feature flow (LSP-first)](#1-reconstruct-the-complete-feature-flow-lsp-first)
@@ -122,7 +123,7 @@ How to use the answers:
 |-------------|---------------------|-------|
 | New setup page / new fields on a setup page | **Setup/How-to** | "Setting up [feature]..." with `## To configure` |
 | New wizard / NavigatePage | **Setup/How-to** | Walk the wizard steps; pair with `assisted-setup-wizard` |
-| New feature concept / new module area | **Conceptual** | "[Feature] in Continia Banking" — what/why/how |
+| New feature concept / new module area | **Conceptual** | "[Feature] in [Solution name]" — what/why/how |
 | New bank auth codeunit / bank enablement | **Bank onboarding** | Requirements + credential table + `## To establish...` |
 | New enum statuses / state machine change | Update **Conceptual** status table | Render values *italic* |
 | New action on an existing page | Update the existing How-to article | Usually an edit, not a new file |
@@ -138,12 +139,12 @@ Before drafting, classify the change honestly. The output is exactly one of thre
 
 - **`newfeature`** — a doc-worthy feature/behavior (new capability, new setup, changed user
   workflow) with **no existing article**, an **uncertain** match, or a genuinely new sub-topic →
-  draft a complete new article (the default). Take the next unused `CB-###`. Scale its depth to
+  draft a complete new article (the default). Take the next unused `<PREFIX>-###`. Scale its depth to
   the magnitude (§3): a *minor* change that still has no existing home is a one-section article,
   not a full multi-section build-up.
 - **`update`** — an enhancement to an **already-documented** feature, where you have a
   **confident** match (see criteria below) → produce a **delta update note** targeting the
-  existing article's `CB-###`, instead of a near-duplicate new file. Do **not** mint a new id.
+  existing article's `<PREFIX>-###` id, instead of a near-duplicate new file. Do **not** mint a new id.
 - **`changelog`** — a pure bug fix / internal refactor with **no user-visible change** → there is
   nothing to document as an article. Recommend a **changelog entry** instead (Functional Area +
   business-focused description + 5-digit work-item ID, per the changelog template in the style
@@ -173,7 +174,7 @@ against the existing article beats a near-empty new file. The default in the tab
 it. Reserve a new article for a minor change only when there is genuinely no existing home for it.
 
 When you fall back to `newfeature` from an **uncertain** match, name the most likely existing
-article so a human can decide: add `may overlap CB-### — consider merging instead` to the
+article so a human can decide: add `may overlap <PREFIX>-### — consider merging instead` to the
 work-item comment.
 
 ### Delta update note format
@@ -185,7 +186,7 @@ Still obey "code wins": every bold UI term must trace to a real AL caption.
 
 ```
 # Update to CB-142 — Payment approval
-Target file: en-us\Continia Banking\Payments\Approving payments.md
+Target file: en-us\<Solution name>\Payments\Approving payments.md
 
 ## What changed
 <1-2 sentences: the new/changed capability, in user terms>
@@ -209,12 +210,13 @@ producing the file.
 
 ## 7. File placement and toc.txt
 
-- Mirror the docs site structure under
-  `C:\GeneralDev\continia.docs.articles\en-us\Continia Banking\`. Place the file in the folder
-  whose siblings cover the same feature area (read 2-3 siblings for tone and placement).
+- Mirror the docs site structure of the published docs set — the repo configured as
+  `DOCS_REPO_PATH` in the docsWriter `.env` (e.g. `<DOCS_REPO_PATH>\en-us\<Solution name>\`).
+  Place the file in the folder whose siblings cover the same feature area (read 2-3 siblings
+  for tone and placement).
 - Filename: human-readable, matching the article title's intent (e.g.
   `Setting up direct debit.md`). Match the casing/spacing convention of existing siblings.
 - Each folder has a `toc.txt` (`filename.md | Display Name`). Provide the exact line to add and
   its position (order = navigation order); do not silently leave the new article out of the TOC.
-- The `id` (`CB-###`) must be unique across the whole docs set — ask the user for it; do not
+- The `id` (`<PREFIX>-###`, using the product's prefix) must be unique across the product's docs set — ask the user for it; do not
   guess. Optionally grep the docs set for the proposed id to confirm it is free.

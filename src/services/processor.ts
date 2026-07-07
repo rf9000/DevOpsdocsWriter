@@ -17,6 +17,8 @@ import * as gen from './generator.ts';
 import * as linker from './skill-linker.ts';
 import { discoverSkills } from './skill-loader.ts';
 import { markdownToHtml, stripHtmlToText } from '../utils/html.ts';
+import { resolveProduct } from '../config/products.ts';
+import type { ProductInfo } from '../config/products.ts';
 
 export interface ProcessorDeps {
   getWorkItem: (config: AppConfig, id: number) => Promise<WorkItemResponse>;
@@ -92,7 +94,7 @@ export function extractOutputKind(agentMessage: string): OutputClassification {
     (/kind:\s*(newfeature|update|changelog)/i.exec(block)?.[1]?.toLowerCase() as
       | OutputKind
       | undefined) ?? 'newfeature';
-  const target = /target:\s*(CB-\d+)/i.exec(block)?.[1]?.toUpperCase();
+  const target = /target:\s*([A-Za-z][A-Za-z0-9]*-\d+)/i.exec(block)?.[1]?.toUpperCase();
   return kind === 'update' && target ? { kind, target } : { kind };
 }
 
@@ -149,6 +151,49 @@ export function extractCommentBody(agentMessage: string): string {
   return (match?.[1] ?? agentMessage).trim();
 }
 
+/**
+ * Resolve which product a work item belongs to and everything that hangs off
+ * that: the product's docs folder (the ONLY folder the agent may search for
+ * existing/related articles), its article-id prefix, and its AL source repo.
+ * Returns a `productIssue` message instead when any of the three cannot be
+ * resolved — the watcher posts it to the work item once and keeps the tag so
+ * the item retries after the work item (or .env) is fixed.
+ */
+export function resolveItemProduct(
+  config: AppConfig,
+  workItem: WorkItemResponse,
+): { product: ProductInfo; docsSearchPath: string; targetRepoPath: string } | { productIssue: string } {
+  const fieldValue = String(workItem.fields[config.productField] ?? '');
+  const product = resolveProduct(fieldValue);
+  if (!product) {
+    return {
+      productIssue:
+        `docsWriter could not determine the product for this work item: ` +
+        `${config.productField} is "${fieldValue || '(empty)'}", which does not map to a known Continia product. ` +
+        `Move the work item into a product area (or correct the field) and it will be picked up on the next poll.`,
+    };
+  }
+  const targetRepoPath = config.targetRepoPaths[product.prefix];
+  if (!targetRepoPath) {
+    return {
+      productIssue:
+        `docsWriter resolved this work item to ${product.docsFolder} (${product.prefix}), ` +
+        `but no TARGET_REPO_PATH_${product.prefix} is configured, so the AL source cannot be read. ` +
+        `Configure it in the docsWriter .env and the item will be picked up on the next poll.`,
+    };
+  }
+  const docsSearchPath = join(config.docsRepoPath, 'en-us', product.docsFolder);
+  if (!existsSync(docsSearchPath)) {
+    return {
+      productIssue:
+        `docsWriter resolved this work item to ${product.docsFolder} (${product.prefix}), ` +
+        `but the docs folder was not found at ${docsSearchPath}. ` +
+        `Check DOCS_REPO_PATH and the docs repo checkout; the item will be picked up on the next poll.`,
+    };
+  }
+  return { product, docsSearchPath, targetRepoPath };
+}
+
 export async function processDocsItem(
   config: AppConfig,
   itemId: number,
@@ -164,6 +209,23 @@ export async function processDocsItem(
       String(workItem.fields['System.Description'] ?? ''),
     );
     log(`  #${itemId}: "${itemTitle}" (${itemType})`);
+
+    // Resolve the product first — it decides the AL repo, the docs folder the
+    // agent may search, and the article-id prefix. Fail fast (before any agent
+    // tokens are spent) when it cannot be resolved.
+    const resolution = resolveItemProduct(config, workItem);
+    if ('productIssue' in resolution) {
+      log(`  #${itemId}: Product unresolved — ${resolution.productIssue}`);
+      return {
+        itemId,
+        documented: false,
+        error: resolution.productIssue,
+        productIssue: resolution.productIssue,
+      };
+    }
+    const { product, docsSearchPath, targetRepoPath } = resolution;
+    log(`  #${itemId}: Product: ${product.docsFolder} (${product.prefix}) — docs scope: ${docsSearchPath}`);
+    const effectiveConfig: AppConfig = { ...config, targetRepoPath };
 
     // Comments
     const rawComments = await deps.getWorkItemComments(config, itemId);
@@ -204,15 +266,17 @@ export async function processDocsItem(
       pullRequests,
       discoveredSkills: discovered,
       outputPath,
-      docsRepoPath: config.docsRepoPath,
+      docsRepoPath: docsSearchPath,
+      productName: product.docsFolder,
+      idPrefix: product.prefix,
     };
 
     let summary: string;
-    const created = deps.createSkillJunctions(config.targetRepoPath, config.skillsSourceDir);
+    const created = deps.createSkillJunctions(effectiveConfig.targetRepoPath, config.skillsSourceDir);
     log(`  #${itemId}: Linked ${created.length} skill junction(s) into source repo`);
     try {
       log(`  #${itemId}: Generating documentation article...`);
-      summary = await deps.generateDocs(config, context);
+      summary = await deps.generateDocs(effectiveConfig, context);
     } finally {
       deps.removeSkillJunctions(created);
       log(`  #${itemId}: Removed skill junction(s)`);

@@ -51,6 +51,44 @@ describe('loadConfig', () => {
     );
   });
 
+  test('legacy TARGET_REPO_PATH maps to the CB product repo', () => {
+    const cfg = loadConfig(baseEnv());
+    expect(cfg.targetRepoPaths).toEqual({ CB: 'C:/repos/al' });
+    expect(cfg.targetRepoPath).toBe('C:/repos/al');
+  });
+
+  test('collects per-product TARGET_REPO_PATH_<PREFIX> vars', () => {
+    const cfg = loadConfig(
+      baseEnv({
+        TARGET_REPO_PATH: undefined,
+        TARGET_REPO_PATH_CB: 'C:/repos/al-banking',
+        TARGET_REPO_PATH_DC: 'C:/repos/al-doccapture',
+        TARGET_REPO_PATH_COPP: 'C:/repos/al-opplus',
+      }),
+    );
+    expect(cfg.targetRepoPaths).toEqual({
+      CB: 'C:/repos/al-banking',
+      DC: 'C:/repos/al-doccapture',
+      COPP: 'C:/repos/al-opplus',
+    });
+    // The fallback default prefers CB.
+    expect(cfg.targetRepoPath).toBe('C:/repos/al-banking');
+  });
+
+  test('an explicit TARGET_REPO_PATH_CB wins over the legacy TARGET_REPO_PATH', () => {
+    const cfg = loadConfig(
+      baseEnv({ TARGET_REPO_PATH_CB: 'C:/repos/al-banking-explicit' }),
+    );
+    expect(cfg.targetRepoPaths['CB']).toBe('C:/repos/al-banking-explicit');
+  });
+
+  test('defaults productField to System.AreaPath and honours the override', () => {
+    expect(loadConfig(baseEnv()).productField).toBe('System.AreaPath');
+    expect(
+      loadConfig(baseEnv({ PRODUCT_FIELD: 'Custom.Product' })).productField,
+    ).toBe('Custom.Product');
+  });
+
   test('honours overrides for the tag and dirs', () => {
     const cfg = loadConfig(
       baseEnv({ WRITE_DOCS_TAG: 'doc-it', OUTPUT_DIR: 'out' }),

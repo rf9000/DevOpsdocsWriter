@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-generates a documentation article for the feature. For each tagged item it reads the description, comments, and linked pull requests, junction-links its own docs-writing skills into the AL source repo, drives the Claude Agent SDK over that repo to produce a validated Continia Banking article, attaches the article to the work item, posts a confirmation comment, and removes the tag.
+docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-generates a documentation article for the feature. For each tagged item it reads the description, comments, and linked pull requests, junction-links its own docs-writing skills into the AL source repo, drives the Claude Agent SDK over that repo to produce a validated Continia documentation article, attaches the article to the work item, posts a confirmation comment, and removes the tag.
 
 ## Architecture
 

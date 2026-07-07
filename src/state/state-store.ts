@@ -10,11 +10,13 @@ export class StateStore {
   private filePath: string;
   private state: ProcessedState;
   private processedSet: Set<number>;
+  private productCommentedSet: Set<number>;
 
   constructor(stateDir: string) {
     this.filePath = join(stateDir, 'processed-items.json');
     this.state = this.load();
     this.processedSet = new Set(this.state.processedItemIds);
+    this.productCommentedSet = new Set(this.state.productCommentedItemIds);
   }
 
   private load(): ProcessedState {
@@ -32,6 +34,7 @@ export class StateStore {
           const p = parsed as Partial<ProcessedState>;
           return {
             processedItemIds: p.processedItemIds ?? [],
+            productCommentedItemIds: p.productCommentedItemIds ?? [],
             lastRunAt: p.lastRunAt ?? '',
             dailyDocsCount: p.dailyDocsCount ?? 0,
             dailyCountDate: p.dailyCountDate ?? '',
@@ -43,6 +46,7 @@ export class StateStore {
     }
     return {
       processedItemIds: [],
+      productCommentedItemIds: [],
       lastRunAt: '',
       dailyDocsCount: 0,
       dailyCountDate: '',
@@ -63,6 +67,18 @@ export class StateStore {
     if (!this.processedSet.has(itemId)) {
       this.processedSet.add(itemId);
       this.state.processedItemIds.push(itemId);
+    }
+  }
+
+  /** Whether the "could not resolve product" comment was already posted for this item. */
+  hasProductComment(itemId: number): boolean {
+    return this.productCommentedSet.has(itemId);
+  }
+
+  markProductCommented(itemId: number): void {
+    if (!this.productCommentedSet.has(itemId)) {
+      this.productCommentedSet.add(itemId);
+      this.state.productCommentedItemIds.push(itemId);
     }
   }
 
@@ -91,11 +107,13 @@ export class StateStore {
   reset(): void {
     this.state = {
       processedItemIds: [],
+      productCommentedItemIds: [],
       lastRunAt: '',
       dailyDocsCount: 0,
       dailyCountDate: '',
     };
     this.processedSet = new Set();
+    this.productCommentedSet = new Set();
     this.save();
   }
 

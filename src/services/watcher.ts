@@ -16,6 +16,11 @@ export interface WatcherDeps {
     workItemId: number,
     tag: string,
   ) => Promise<void>;
+  addWorkItemComment: (
+    config: AppConfig,
+    workItemId: number,
+    html: string,
+  ) => Promise<unknown>;
 }
 
 const defaultDeps: WatcherDeps = {
@@ -23,6 +28,7 @@ const defaultDeps: WatcherDeps = {
   processDocsItem: proc.processDocsItem,
   removeTagFromWorkItem: sdk.removeTagFromWorkItem,
   addTagToWorkItem: sdk.addTagToWorkItem,
+  addWorkItemComment: sdk.addWorkItemComment,
 };
 
 function log(message: string): void {
@@ -78,6 +84,27 @@ export async function runPollCycle(
       } else {
         log(`#${itemId}: Documentation failed — ${result.error ?? 'unknown reason'}`);
         errors++;
+
+        // Product could not be resolved: tell the work item why, exactly once.
+        // The write-docs tag stays on, so fixing the work item (or .env)
+        // auto-retries it on a later poll without re-tagging.
+        if (result.productIssue && !stateStore.hasProductComment(itemId)) {
+          if (!config.dryRun) {
+            try {
+              await deps.addWorkItemComment(
+                config,
+                itemId,
+                `⚠️ <b>docsWriter could not process this item.</b><br/>${escapeHtml(result.productIssue)}`,
+              );
+              stateStore.markProductCommented(itemId);
+              log(`#${itemId}: Posted product-resolution comment (once)`);
+            } catch (commentErr) {
+              log(`#${itemId}: Warning — failed to post product-resolution comment: ${commentErr}`);
+            }
+          } else {
+            log(`#${itemId}: [DRY RUN] Would post product-resolution comment`);
+          }
+        }
       }
     } catch (err) {
       log(`#${itemId}: Fatal error — ${err}`);
@@ -87,6 +114,10 @@ export async function runPollCycle(
 
   stateStore.save();
   return { documented, skipped, errors };
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function sleep(ms: number, signal: { aborted: boolean }): Promise<void> {
@@ -116,7 +147,10 @@ export async function startWatcher(config: AppConfig): Promise<void> {
 
   log(`Starting docsWriter — polling every ${config.pollIntervalMinutes} minutes`);
   log(`Watching tag: "${config.writeDocsTag}"`);
-  log(`Source repo: ${config.targetRepoPath}`);
+  log(`Product field: ${config.productField}`);
+  for (const [prefix, repo] of Object.entries(config.targetRepoPaths)) {
+    log(`Source repo [${prefix}]: ${repo}`);
+  }
   log(`Max ${config.maxDocsPerDay} articles per day`);
 
   while (!signal.aborted) {

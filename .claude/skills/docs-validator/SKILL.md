@@ -1,16 +1,17 @@
 ---
 name: docs-validator
 description: >-
-  Validate a Continia Banking documentation article against the house guidelines and report
+  Validate a Continia documentation article against the house guidelines and report
   violations. Runs a deterministic lint script (frontmatter, date/id format, single H1, balanced
-  {% hint %} blocks, @CB-### link form, contractions, Related information, image paths), an
+  {% hint %} blocks, @[PREFIX]-### link form, invalid contractions, em dashes, Latin abbreviations,
+  Related information, image paths), an
   accuracy/anti-hallucination check (bold UI terms must trace to real AL captions), plus a
   judgment pass for tone, structure, UI-element formatting, and link appropriateness. Use when
   asked to validate docs, check an article against guidelines, lint docs, review a docs page for
   compliance, or "/validate-docs". Run automatically after writing or editing any docs article.
 ---
 
-# Continia Banking Documentation Validator
+# Continia Documentation Validator
 
 Validate one or more documentation articles against the canonical guidelines and produce a
 grouped, line-referenced report. The single source of rules is
@@ -26,7 +27,8 @@ rule ID from that file.
    ```bash
    python ".claude/skills/docs-validator/scripts/lint_article.py" "<path-to-article.md>"
    ```
-   The script checks: FM01-FM05 (frontmatter), HD01-HD02 (H1), VT01 (contractions),
+   The script checks: FM01-FM05 (frontmatter), HD01-HD02 (H1), VT01 (invalid contractions),
+   VT06-VT09 (em dashes, Latin abbreviations, exclamation marks, "(s)" plurals),
    UI05 (search pattern), CO01-CO03 (hints), LK01/LK05 (links), IM01-IM02 (images).
    It exits non-zero when there are BLOCKING findings.
 
@@ -38,7 +40,7 @@ rule ID from that file.
    not match one. Treat each as VERIFY: confirm the page/field/action genuinely exists (it may
    live in a dependency, have a slightly different caption, or be intentional emphasis). This
    catches invented UI that the format lint would happily pass. The `--al-root` is the AL solution
-   root (e.g. the Continia Banking working dir), not the docs repo.
+   root (e.g. the product's AL working dir), not the docs repo.
 
 4. **Run the judgment pass** - Read the article and check the `[judgment]` rules from
    `../docs-writer/references/validation-rules.md` that the script cannot enforce:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Accuracy (anti-hallucination) check for Continia Banking docs — rule AC01.
+"""Accuracy (anti-hallucination) check for Continia docs — rule AC01.
 
 Extracts every **bold** UI term from a documentation article and checks whether each one
 exists as an AL `Caption` somewhere in the codebase. Bold terms that do not match any caption
