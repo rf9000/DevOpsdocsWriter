@@ -154,8 +154,6 @@ export async function generateDocs(
         model: config.claudeModel,
         maxTurns: config.maxTurns,
         tools: ['Read', 'Grep', 'Glob', 'Bash', 'Skill', 'LSP', 'Write', 'Edit'],
-        permissionMode: 'bypassPermissions',
-        allowDangerouslySkipPermissions: true,
         canUseTool,
         systemPrompt: {
           type: 'preset',
