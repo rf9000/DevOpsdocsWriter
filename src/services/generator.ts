@@ -294,6 +294,7 @@ function renderDecidedClassification(context: DocsContext): string {
     lines.push(
       `- **Classification (already decided — do NOT re-classify).** An upstream classifier examined the changed AL objects and the docs set and decided: this run produces a DELTA UPDATE NOTE targeting the existing article **${c.target}**${c.targetFile ? ` (\`${c.targetFile}\`)` : ''}. Do not search for a different target and do not mint a new id. ${disagree} ${marker}`,
       `- The delta note is read by a human writer and MUST use the scaffold from \`code-to-docs.md\` §6: open with \`# Update to ${c.target} — <article title>\`, then a blockquote banner stating it is an update to an existing article (not a standalone page), then \`Target file:\` and \`Work item:\` lines, then \`## What changed\`, \`## Suggested edits\`, and \`## Points to verify before publishing\`. A delta note delivered as bare content without this scaffold is a FAILED output — proportionality caps the edits' content, never the scaffold.`,
+      `- **The delta note is a FILE deliverable, not a chat reply.** Even though a human writer will read it, it is delivered exactly like a full article: you MUST \`Write\` it to the output path AND mirror it verbatim in the \`<<<ARTICLE>>>\` block. Do NOT deliver it only as your final message, and do NOT describe it as a file to "discard" or "apply then delete" — writing it to the output path is the entire point of this run, and a run that ends without that file is a FAILED run.`,
     );
   } else if (c.kind === 'changelog') {
     lines.push(

@@ -8,6 +8,7 @@ import {
   classifyItem,
   extractCommentBody,
   extractArticleBody,
+  recoverDeliverableFromMessage,
   extractOutputKind,
   deliverableFileName,
 } from '../../src/services/processor.ts';
@@ -138,6 +139,71 @@ describe('processDocsItem', () => {
     expect(extractCommentBody('  plain summary  ')).toBe('plain summary');
   });
 
+  // Regression: on an `update` run the agent produces the delta note as its final
+  // message and skips both the Write and the <<<ARTICLE>>>/<<<WORKITEM-COMMENT>>>
+  // markers. The pipeline must still attach the note and post a sane comment
+  // instead of dumping the note to the terminal and failing the item.
+  test('recovers an unmarked delta note from the final message and delivers it', async () => {
+    const config = cfg();
+    const deltaNote =
+      '# Update to CB-23 — Configuring export settings\n\n' +
+      '> **This is an update to an existing article, not a standalone page.** Apply the edits below.\n\n' +
+      'Target file: `Payment Export/Setup/Configuring export settings.md`\n' +
+      'Work item: 42\n\n' +
+      '## What changed\n\nThe **Payment Method Filter** field was renamed to **Default Payment Method Filter**.\n\n' +
+      '## Suggested edits\n\n- Rename the field references.\n\n' +
+      '## Points to verify before publishing\n\n- Confirm the section location.';
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const uploadAttachment = mock(() =>
+      Promise.resolve({ id: 'a1', url: 'https://example.com/a1' }),
+    );
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'update' as const,
+          target: 'CB-23',
+          candidates: [],
+          reasoning: 'existing article documents the page',
+        }),
+      ),
+      // agent writes NOTHING and returns the bare note (no markers) — the failure mode
+      generateDocs: mock(() => Promise.resolve(deltaNote)),
+      uploadAttachment,
+      addWorkItemComment,
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(result.articlePath).toContain('workitem-42-update-CB-23.md');
+    // the recovered note is attached
+    expect(uploadAttachment).toHaveBeenCalledTimes(1);
+    const attached = (uploadAttachment.mock.calls[0] as unknown[])[2] as string;
+    expect(attached).toContain('# Update to CB-23');
+    expect(attached).toContain('Default Payment Method Filter');
+    // the comment is the short synthesized note, NOT the whole delta note
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('recovered from the agent');
+    expect(comment).not.toContain('Suggested edits');
+  });
+
+  test('fails closed when the message has no recognizable deliverable', async () => {
+    const config = cfg();
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({ kind: 'update' as const, target: 'CB-23', candidates: [], reasoning: 'x' }),
+      ),
+      generateDocs: mock(() =>
+        Promise.resolve("I explored the code but couldn't find the feature, so I stopped."),
+      ),
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(false);
+    expect(deps.uploadAttachment).toHaveBeenCalledTimes(0);
+  });
+
   test('dry-run: writes article but performs no ADO writes', async () => {
     const config = cfg({ dryRun: true });
     const deps = makeDeps();
@@ -189,7 +255,7 @@ describe('processDocsItem', () => {
 
     const result = await processDocsItem(config, 42, deps);
     expect(result.documented).toBe(false);
-    expect(result.error).toContain('did not produce an article');
+    expect(result.error).toContain('did not produce a deliverable');
     expect(deps.uploadAttachment).toHaveBeenCalledTimes(0);
     expect(deps.removeSkillJunctions).toHaveBeenCalledTimes(1);
   });
@@ -217,6 +283,35 @@ describe('processDocsItem', () => {
     expect(deps.uploadAttachment).toHaveBeenCalledTimes(1);
     expect(deps.linkAttachmentToWorkItem).toHaveBeenCalledTimes(1);
     expect(deps.addWorkItemComment).toHaveBeenCalledTimes(1);
+  });
+
+  test('recoverDeliverableFromMessage salvages an unmarked update note', () => {
+    const msg =
+      'Here is the delta note.\n\n# Update to CB-23 — Configuring export settings\n\n## What changed\n\nRenamed a field.';
+    const body = recoverDeliverableFromMessage(msg, 'update');
+    // starts at the scaffold heading, dropping the preamble chatter
+    expect(body?.startsWith('# Update to CB-23')).toBe(true);
+    expect(body).toContain('Renamed a field.');
+  });
+
+  test('recoverDeliverableFromMessage strips coordination markers before salvaging', () => {
+    const msg =
+      '# Update to CB-23 — Title\n\n## What changed\n\nX.\n\n' +
+      '<<<DOCS-OUTPUT-KIND>>>\nkind: update\ntarget: CB-23\n<<<END-DOCS-OUTPUT-KIND>>>';
+    const body = recoverDeliverableFromMessage(msg, 'update');
+    expect(body).toContain('## What changed');
+    expect(body).not.toContain('DOCS-OUTPUT-KIND');
+  });
+
+  test('recoverDeliverableFromMessage salvages a newfeature article by its meta block', () => {
+    const msg = 'preamble\n\n```meta\ntitle: X\n```\n\n# X\n\nBody.';
+    const body = recoverDeliverableFromMessage(msg, 'newfeature');
+    expect(body?.startsWith('```meta')).toBe(true);
+  });
+
+  test('recoverDeliverableFromMessage returns null for non-deliverable chatter', () => {
+    expect(recoverDeliverableFromMessage('I could not find the feature.', 'update')).toBeNull();
+    expect(recoverDeliverableFromMessage('Just some notes, no article.', 'newfeature')).toBeNull();
   });
 
   test('extractArticleBody returns the marked block, or null when absent', () => {

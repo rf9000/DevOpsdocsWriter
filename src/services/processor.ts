@@ -146,6 +146,67 @@ export function extractArticleBody(agentMessage: string): string | null {
 }
 
 /**
+ * Strip the pipeline's coordination markers (`<<<ARTICLE>>>`,
+ * `<<<DOCS-OUTPUT-KIND>>>`, `<<<WORKITEM-COMMENT>>>`) and their contents from an
+ * agent message, leaving just the prose the agent wrote.
+ */
+function stripCoordinationBlocks(message: string): string {
+  return message
+    .replace(/<<<ARTICLE>>>[\s\S]*?<<<END-ARTICLE>>>/g, '')
+    .replace(/<<<DOCS-OUTPUT-KIND>>>[\s\S]*?<<<END-DOCS-OUTPUT-KIND>>>/g, '')
+    .replace(/<<<WORKITEM-COMMENT>>>[\s\S]*?<<<END-WORKITEM-COMMENT>>>/g, '')
+    .replace(/<<<\/?[A-Z-]+>>>/g, '') // any stray unpaired markers
+    .trim();
+}
+
+/**
+ * Last-resort recovery: when the agent neither Wrote the output file NOR mirrored
+ * it in an `<<<ARTICLE>>>` block, salvage the deliverable from its final message.
+ * This is the failure mode delta-note (`update`) runs hit — the agent treats the
+ * note as "edit instructions for a human" and emits it as its final message with
+ * no Write and no markers. The classifier already decided the kind, so we key on
+ * each deliverable's mandatory opening shape to avoid attaching stray chatter: an
+ * `update` must open with the `# Update to <id>` scaffold; a `newfeature` with a
+ * ```meta block or an H1. Returns null when no recognizable deliverable is
+ * present, so a genuinely empty / bailed run still fails closed.
+ */
+export function recoverDeliverableFromMessage(
+  agentMessage: string,
+  kind: OutputKind,
+): string | null {
+  const body = stripCoordinationBlocks(agentMessage);
+  if (!body) return null;
+  if (kind === 'update') {
+    const m = /^#\s+Update to\s.*/m.exec(body);
+    return m ? body.slice(m.index).trim() : null;
+  }
+  if (kind === 'newfeature') {
+    const meta = body.indexOf('```meta');
+    if (meta >= 0) return body.slice(meta).trim();
+    const h1 = /^#\s+\S/m.exec(body);
+    return h1 ? body.slice(h1.index).trim() : null;
+  }
+  // changelog: short, no fixed heading shape — accept the stripped remainder.
+  return body;
+}
+
+/**
+ * A minimal, code-generated work-item comment for the rare run where the agent
+ * produced the deliverable but omitted its `<<<WORKITEM-COMMENT>>>` block. Beats
+ * `extractCommentBody`'s whole-message fallback, which would dump the entire
+ * deliverable into the comment.
+ */
+function recoveryComment(kind: OutputKind): string {
+  const noun =
+    kind === 'update' ? 'delta note' : kind === 'changelog' ? 'changelog entry' : 'article';
+  return (
+    `The deliverable was recovered from the agent's final message — it did not emit ` +
+    `the standard work-item-comment block, so this note was generated automatically. ` +
+    `Review the attached ${noun} directly.`
+  );
+}
+
+/**
  * The agent is told to wrap the human-facing comment in
  * `<<<WORKITEM-COMMENT>>>` … `<<<END-WORKITEM-COMMENT>>>` markers and keep its
  * validation report outside them. We post only what's between the markers, so a
@@ -381,29 +442,39 @@ export async function processDocsItem(
       log(`  #${itemId}: Removed skill junction(s)`);
     }
 
+    // Set when the deliverable had to be salvaged from the agent's raw final
+    // message (no file, no <<<ARTICLE>>> fence). In that mode the whole message
+    // IS the deliverable, so the work-item comment is synthesized rather than
+    // extracted — otherwise the entire note would be dumped into the comment.
+    let recoveredFromMessage = false;
     if (!existsSync(outputPath)) {
-      // The agent finished without writing the article to the expected path.
-      // It is required to mirror the final article between <<<ARTICLE>>>
-      // markers as a safety copy — recover from that so a forgotten Write
-      // doesn't lose the whole article (the costly part is already done).
-      const recovered = extractArticleBody(summary);
+      // The agent finished without writing the deliverable to the expected path.
+      // Recover it — first from the required <<<ARTICLE>>> safety copy, then, when
+      // even that marker is missing (the delta-note failure mode: the agent emits
+      // the note as its final message with no Write and no markers), from the raw
+      // final message keyed on the classifier's decided kind. Either way the
+      // costly agent run is not lost to the terminal.
+      const fromFence = extractArticleBody(summary);
+      const recovered = fromFence ?? recoverDeliverableFromMessage(summary, classification.kind);
       if (recovered) {
+        recoveredFromMessage = !fromFence;
         writeFileSync(outputPath, recovered.endsWith('\n') ? recovered : `${recovered}\n`);
         log(
-          `  #${itemId}: Agent did not Write the article; recovered it from the ` +
-            `final message (${recovered.length} chars) → ${outputPath}`,
+          `  #${itemId}: Agent did not Write the deliverable; recovered it from the ` +
+            `${fromFence ? '<<<ARTICLE>>> block' : 'final message (markers missing)'} ` +
+            `(${recovered.length} chars) → ${outputPath}`,
         );
       } else {
-        // No file and no recoverable block. Log the final message — it reveals
-        // whether the agent drafted elsewhere or bailed — so a silent "did not
-        // produce an article" is diagnosable from the logs.
+        // No file, no <<<ARTICLE>>> block, and nothing that looks like a
+        // deliverable in the message. Log it — it reveals whether the agent
+        // drafted elsewhere or bailed — so the failure is diagnosable.
         const trimmed = summary.trim();
-        log(`  #${itemId}: No article at ${outputPath} and no <<<ARTICLE>>> block. Agent final message (${trimmed.length} chars):`);
+        log(`  #${itemId}: No deliverable at ${outputPath}, no <<<ARTICLE>>> block, and no recognizable deliverable in the final message (${trimmed.length} chars):`);
         log(trimmed.length > 8000 ? `${trimmed.slice(0, 8000)}\n…(truncated)` : trimmed || '(empty)');
         return {
           itemId,
           documented: false,
-          error: `Agent did not produce an article at ${outputPath}`,
+          error: `Agent did not produce a deliverable at ${outputPath}`,
         };
       }
     }
@@ -436,7 +507,12 @@ export async function processDocsItem(
         `${classification.target ? ` (${classification.target})` : ''} → ${deliverableName}`,
     );
 
-    const commentBody = extractCommentBody(summary) + candidateNote(classification);
+    // In the message-recovery path the whole message is the deliverable, so
+    // extractCommentBody would post the entire note as the comment. Synthesize a
+    // short note there instead; otherwise extract the agent's comment block.
+    const commentBody =
+      (recoveredFromMessage ? recoveryComment(classification.kind) : extractCommentBody(summary)) +
+      candidateNote(classification);
 
     if (config.dryRun) {
       const summaryPath = join(outputDir, `workitem-${itemId}-summary.md`);
