@@ -45,6 +45,8 @@ State (processed ids + a daily cap) is persisted as JSON to avoid runaway genera
 
 See `.env.example`. Required: `AZURE_DEVOPS_PAT`/`ORG`/`PROJECT`, `TARGET_REPO_PATH` (AL source repo), `DOCS_REPO_PATH` (continia.docs.articles). Optional: `WRITE_DOCS_TAG` (default `write-docs`), `OUTPUT_DIR`, `SKILLS_SOURCE_DIR`, `POLL_INTERVAL_MINUTES`, `MAX_DOCS_PER_DAY`, `CLAUDE_MODEL`, `PROMPT_PATH`, `STATE_DIR`.
 
+**Style-guide sync:** `.claude/skills/docs-writer/references/style-guide.md` is a verbatim copy of an upstream GitHub file. A daily host-side job keeps it in sync and rebuilds the container on change — see [scripts/README.md](scripts/README.md).
+
 ## Project structure
 
 ```
