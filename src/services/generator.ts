@@ -39,7 +39,23 @@ function isUnderDir(child: string, parent: string, cwd: string): boolean {
  *  - fences Write/Edit/NotebookEdit to `outputDir` so the agent can never write
  *    into the source repo or the docs repo (enforces "attach only").
  */
-export function makeCanUseTool(outputDir: string, cwd: string) {
+/** Aggregate SDK permission denials into a compact `Tool×count` summary. */
+export function summarizeDenials(
+  denials: Array<{ tool_name: string }> | undefined,
+): string {
+  if (!denials?.length) return '';
+  const counts = new Map<string, number>();
+  for (const d of denials) {
+    counts.set(d.tool_name, (counts.get(d.tool_name) ?? 0) + 1);
+  }
+  return [...counts.entries()].map(([name, count]) => `${name}×${count}`).join(', ');
+}
+
+export function makeCanUseTool(
+  outputDir: string,
+  cwd: string,
+  log: (message: string) => void = console.log,
+) {
   const writeTools = new Set(['Write', 'Edit', 'NotebookEdit', 'MultiEdit']);
   return async function canUseTool(
     toolName: string,
@@ -49,6 +65,7 @@ export function makeCanUseTool(outputDir: string, cwd: string) {
       const command = String(input.command ?? '');
       for (const pattern of DENIED_BASH_PATTERNS) {
         if (pattern.test(command)) {
+          log(`  Gate denied Bash (destructive): ${command}`);
           return {
             behavior: 'deny',
             message: `Blocked destructive bash command: ${command}`,
@@ -60,6 +77,7 @@ export function makeCanUseTool(outputDir: string, cwd: string) {
     if (writeTools.has(toolName)) {
       const target = String(input.file_path ?? input.notebook_path ?? '');
       if (!target || !isUnderDir(target, outputDir, cwd)) {
+        log(`  Gate denied ${toolName} outside output dir: ${target || '(no path)'}`);
         return {
           behavior: 'deny',
           message: `Writes are only allowed under the output directory (${outputDir}). Write the article there, not into the source or docs repo. Rejected path: ${target}`,
@@ -191,14 +209,19 @@ export async function generateDocs(
           `  Cost: $${message.total_cost_usd.toFixed(4)} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${message.num_turns} turns | ${models}`,
         );
         console.log(`  Tools: ${tools}`);
+        // Surface gate denials even on success — a "successful" run whose
+        // Writes were denied is exactly the case where the deliverable ends up
+        // missing and has to be recovered from the <<<ARTICLE>>> block.
+        const deniedSummary = summarizeDenials(message.permission_denials);
+        if (deniedSummary) {
+          console.log(`  Denied by gate: ${deniedSummary}`);
+        }
         resultSubtype = message.subtype;
         if (message.subtype === 'success') {
           result = message.result;
         } else {
           const errs = message.errors?.length ? message.errors.join('; ') : '';
-          const denials = message.permission_denials?.length
-            ? `denied tools: ${message.permission_denials.map((d) => d.tool_name).join(', ')}`
-            : '';
+          const denials = deniedSummary ? `denied tools: ${deniedSummary}` : '';
           resultError = [errs, denials].filter(Boolean).join(' | ') || undefined;
           if (message.subtype === 'error_max_turns') {
             console.error(`  Agent hit max turns (${turnCount}).`);

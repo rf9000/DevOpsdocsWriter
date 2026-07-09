@@ -6,6 +6,7 @@ import {
   buildUserPrompt,
   buildSystemPrompt,
   makeCanUseTool,
+  summarizeDenials,
 } from '../../src/services/generator.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
 
@@ -183,6 +184,61 @@ describe('makeCanUseTool', () => {
   test('allows non-write tools', async () => {
     expect((await gate('Read', { file_path: 'anything' })).behavior).toBe('allow');
     expect((await gate('Grep', {})).behavior).toBe('allow');
+  });
+});
+
+describe('makeCanUseTool denial logging', () => {
+  const outputDir = resolve('C:/work/.output');
+  const cwd = resolve('C:/repos/al');
+
+  test('logs each denied write with the tool name and rejected path', async () => {
+    const lines: string[] = [];
+    const gate = makeCanUseTool(outputDir, cwd, (msg) => lines.push(msg));
+
+    await gate('Write', { file_path: 'C:/repos/continia.docs.articles/en-us/CB-100.md' });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Write');
+    expect(lines[0]).toContain('C:/repos/continia.docs.articles/en-us/CB-100.md');
+  });
+
+  test('logs a denied bash command', async () => {
+    const lines: string[] = [];
+    const gate = makeCanUseTool(outputDir, cwd, (msg) => lines.push(msg));
+
+    await gate('Bash', { command: 'git push origin main' });
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('Bash');
+    expect(lines[0]).toContain('git push origin main');
+  });
+
+  test('logs nothing for allowed calls', async () => {
+    const lines: string[] = [];
+    const gate = makeCanUseTool(outputDir, cwd, (msg) => lines.push(msg));
+
+    await gate('Write', { file_path: join(outputDir, 'workitem-1-docs.md') });
+    await gate('Bash', { command: 'git diff main...HEAD' });
+    await gate('Read', { file_path: 'anything' });
+
+    expect(lines).toHaveLength(0);
+  });
+});
+
+describe('summarizeDenials', () => {
+  test('aggregates denials into tool×count pairs', () => {
+    expect(
+      summarizeDenials([
+        { tool_name: 'Write' },
+        { tool_name: 'Write' },
+        { tool_name: 'Bash' },
+      ]),
+    ).toBe('Write×2, Bash×1');
+  });
+
+  test('returns empty string for no denials', () => {
+    expect(summarizeDenials([])).toBe('');
+    expect(summarizeDenials(undefined)).toBe('');
   });
 });
 
