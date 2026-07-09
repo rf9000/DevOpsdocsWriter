@@ -117,6 +117,13 @@ describe('queryTaggedWorkItems', () => {
     expect(wiql).not.toContain('WorkItemType'); // no type restriction
   });
 
+  test('does not filter by state — the tag alone opts an item in, even when Closed', async () => {
+    setMockFetch({ workItems: [] });
+    await queryTaggedWorkItems(mockConfig(), 'write-docs');
+    const wiql = JSON.parse(mockFn.mock.calls[0]![1]!.body as string).query as string;
+    expect(wiql).not.toContain('System.State');
+  });
+
   test('returns empty when nothing matches WIQL', async () => {
     setMockFetch({ workItems: [] });
     expect(await queryTaggedWorkItems(mockConfig(), 'write-docs')).toEqual([]);

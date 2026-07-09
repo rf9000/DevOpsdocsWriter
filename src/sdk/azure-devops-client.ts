@@ -110,7 +110,9 @@ export async function queryTaggedWorkItems(
   config: AppConfig,
   tag: string,
 ): Promise<number[]> {
-  const wiql = `SELECT [System.Id] FROM WorkItems WHERE [System.State] NOT IN ('Closed', 'Removed') AND [System.Tags] CONTAINS '${tag}'`;
+  // No state filter: docs are usually written AFTER a feature is done, so
+  // tagged items are often already Closed. The tag alone opts an item in.
+  const wiql = `SELECT [System.Id] FROM WorkItems WHERE [System.Tags] CONTAINS '${tag}'`;
 
   const path = 'wit/wiql?api-version=7.0';
   const data = await adoFetchWithRetry<WiqlFlatResponse>(config, path, {
