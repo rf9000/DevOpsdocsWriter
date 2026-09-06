@@ -260,7 +260,7 @@ export function resolveItemProduct(
   if (!targetRepoPath) {
     return {
       productIssue:
-        `docsWriter resolved this work item to ${product.docsFolder} (${product.prefix}), ` +
+        `docsWriter resolved this work item to ${product.name} (${product.prefix}), ` +
         `but no TARGET_REPO_PATH_${product.prefix} is configured, so the AL source cannot be read. ` +
         `Configure it in the docsWriter .env and the item will be picked up on the next poll.`,
     };
@@ -269,7 +269,7 @@ export function resolveItemProduct(
   if (!existsSync(docsSearchPath)) {
     return {
       productIssue:
-        `docsWriter resolved this work item to ${product.docsFolder} (${product.prefix}), ` +
+        `docsWriter resolved this work item to ${product.name} (${product.prefix}), ` +
         `but the docs folder was not found at ${docsSearchPath}. ` +
         `Check DOCS_REPO_PATH and the docs repo checkout; the item will be picked up on the next poll.`,
     };
@@ -309,7 +309,7 @@ export async function gatherItemContext(
   const resolution = resolveItemProduct(config, workItem);
   if ('productIssue' in resolution) return resolution;
   const { product, docsSearchPath, targetRepoPath } = resolution;
-  log(`  #${itemId}: Product: ${product.docsFolder} (${product.prefix}) — docs scope: ${docsSearchPath}`);
+  log(`  #${itemId}: Product: ${product.name} (${product.prefix}) — docs scope: ${docsSearchPath}`);
 
   const rawComments = await deps.getWorkItemComments(config, itemId);
   const comments = rawComments
@@ -355,7 +355,7 @@ export async function classifyItem(
       comments,
       pullRequests,
       docsRepoPath: docsSearchPath,
-      productName: product.docsFolder,
+      productName: product.name,
       idPrefix: product.prefix,
     },
   );
@@ -395,7 +395,7 @@ export async function processDocsItem(
       comments,
       pullRequests,
       docsRepoPath: docsSearchPath,
-      productName: product.docsFolder,
+      productName: product.name,
       idPrefix: product.prefix,
     });
     log(
@@ -426,7 +426,7 @@ export async function processDocsItem(
       discoveredSkills: discovered,
       outputPath,
       docsRepoPath: docsSearchPath,
-      productName: product.docsFolder,
+      productName: product.name,
       idPrefix: product.prefix,
       classification,
     };

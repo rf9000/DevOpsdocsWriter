@@ -10,7 +10,15 @@
 export interface ProductInfo {
   /** The area-path segment that identifies the product in Azure DevOps. */
   areaName: string;
-  /** The product's folder under `<DOCS_REPO_PATH>/en-us/`. */
+  /** The solution's full name, as used in prompts and work-item comments. */
+  name: string;
+  /**
+   * The product's folder under `<DOCS_REPO_PATH>/en-us/`, spelled exactly as
+   * it is on disk. The docs site is mid-migration to GitBook, so the products
+   * already synced from there use kebab-case folders while the rest keep the
+   * older title-case ones — the container host is Linux, so the casing and the
+   * hyphens both matter.
+   */
   docsFolder: string;
   /** The article-id prefix used in that folder (e.g. `CB-130`). */
   prefix: string;
@@ -20,19 +28,19 @@ export interface ProductInfo {
 export const PRODUCTS: ReadonlyMap<string, ProductInfo> = new Map(
   (
     [
-      ['Continia Banking', 'Continia Banking', 'CB'],
-      ['Document Capture', 'Continia Document Capture', 'DC'],
-      ['Expense Management', 'Continia Expense Management', 'EM'],
-      ['Payment Management', 'Continia Payment Management', 'PM'],
-      ['Collection Management', 'Continia Collection Management', 'CM'],
-      ['Document Output', 'Continia Document Output', 'DO'],
-      ['Continia Finance', 'Continia Finance', 'CF'],
-      ['OPplus', 'Continia OPplus', 'COPP'],
-      ['Continia Sustainability', 'Continia Sustainability', 'CS'],
+      ['Continia Banking', 'Continia Banking', 'continia-banking', 'CB'],
+      ['Document Capture', 'Continia Document Capture', 'continia-document-capture', 'DC'],
+      ['Expense Management', 'Continia Expense Management', 'continia-expense-management', 'EM'],
+      ['Payment Management', 'Continia Payment Management', 'Continia Payment Management', 'PM'],
+      ['Collection Management', 'Continia Collection Management', 'Continia Collection Management', 'CM'],
+      ['Document Output', 'Continia Document Output', 'continia-document-output', 'DO'],
+      ['Continia Finance', 'Continia Finance', 'continia-finance', 'CF'],
+      ['OPplus', 'Continia OPplus', 'Continia OPplus', 'COPP'],
+      ['Continia Sustainability', 'Continia Sustainability', 'Continia Sustainability', 'CS'],
     ] as const
-  ).map(([areaName, docsFolder, prefix]) => [
+  ).map(([areaName, name, docsFolder, prefix]) => [
     areaName,
-    { areaName, docsFolder, prefix },
+    { areaName, name, docsFolder, prefix },
   ]),
 );
 

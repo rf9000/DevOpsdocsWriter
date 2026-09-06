@@ -60,7 +60,7 @@ describe('processDocsItem', () => {
   beforeEach(() => {
     outDir = mkdtempSync(join(tmpdir(), 'proc-out-'));
     docsDir = mkdtempSync(join(tmpdir(), 'proc-docs-'));
-    mkdirSync(join(docsDir, 'en-us', 'Continia Banking'), { recursive: true });
+    mkdirSync(join(docsDir, 'en-us', 'continia-banking'), { recursive: true });
   });
   afterEach(() => {
     rmSync(outDir, { recursive: true, force: true });
@@ -390,7 +390,7 @@ describe('processDocsItem', () => {
 
     expect(result.documented).toBe(true);
     // mockWorkItem's area path is Continia Software\Continia Banking\Banking Connectivity
-    expect(seenCtx!.docsRepoPath).toBe(join(docsDir, 'en-us', 'Continia Banking'));
+    expect(seenCtx!.docsRepoPath).toBe(join(docsDir, 'en-us', 'continia-banking'));
     expect(seenCtx!.productName).toBe('Continia Banking');
     expect(seenCtx!.idPrefix).toBe('CB');
     // The agent runs against the product's AL repo, resolved from targetRepoPaths.
@@ -399,7 +399,7 @@ describe('processDocsItem', () => {
   });
 
   test('selects the AL repo of the resolved product, not the default', async () => {
-    mkdirSync(join(docsDir, 'en-us', 'Continia Document Capture'), { recursive: true });
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-capture'), { recursive: true });
     let seenCfg: AppConfig | undefined;
     let seenCtx: DocsContext | undefined;
     const deps = makeDeps({
@@ -430,7 +430,7 @@ describe('processDocsItem', () => {
     expect(result.documented).toBe(true);
     expect(seenCfg!.targetRepoPath).toBe('C:/repos/al-doccapture');
     expect(seenCtx!.idPrefix).toBe('DC');
-    expect(seenCtx!.docsRepoPath).toBe(join(docsDir, 'en-us', 'Continia Document Capture'));
+    expect(seenCtx!.docsRepoPath).toBe(join(docsDir, 'en-us', 'continia-document-capture'));
   });
 
   test('unmapped area path → productIssue, no agent run, no junctions', async () => {
@@ -462,7 +462,7 @@ describe('processDocsItem', () => {
   });
 
   test('resolved product without a configured AL repo → productIssue naming the env var', async () => {
-    mkdirSync(join(docsDir, 'en-us', 'Continia Document Capture'), { recursive: true });
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-capture'), { recursive: true });
     const deps = makeDeps({
       getWorkItem: mock(() =>
         Promise.resolve(
@@ -480,7 +480,7 @@ describe('processDocsItem', () => {
   });
 
   test('missing product docs folder → productIssue', async () => {
-    rmSync(join(docsDir, 'en-us', 'Continia Banking'), { recursive: true, force: true });
+    rmSync(join(docsDir, 'en-us', 'continia-banking'), { recursive: true, force: true });
     const deps = makeDeps();
 
     const result = await processDocsItem(cfg(), 42, deps);
@@ -624,7 +624,7 @@ describe('classifyItem', () => {
   beforeEach(() => {
     outDir = mkdtempSync(join(tmpdir(), 'clf-out-'));
     docsDir = mkdtempSync(join(tmpdir(), 'clf-docs-'));
-    mkdirSync(join(docsDir, 'en-us', 'Continia Banking'), { recursive: true });
+    mkdirSync(join(docsDir, 'en-us', 'continia-banking'), { recursive: true });
   });
   afterEach(() => {
     rmSync(outDir, { recursive: true, force: true });

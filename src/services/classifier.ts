@@ -39,9 +39,9 @@ export interface ClassifierContext {
   itemDescription: string;
   comments: string[];
   pullRequests: PrContext[];
-  /** The product's folder inside the docs set (read-only), e.g. `<DOCS_REPO_PATH>/en-us/Continia Banking`. */
+  /** The product's folder inside the docs set (read-only), e.g. `<DOCS_REPO_PATH>/en-us/continia-banking`. */
   docsRepoPath: string;
-  /** Resolved product name (docs folder name), e.g. "Continia Banking". */
+  /** Resolved solution name, e.g. "Continia Banking". */
   productName: string;
   /** The product's article-id prefix, e.g. "CB". */
   idPrefix: string;

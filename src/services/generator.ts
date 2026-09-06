@@ -101,11 +101,11 @@ export interface DocsContext {
   outputPath: string;
   /**
    * Absolute path to the resolved product's folder inside the published docs
-   * set (read-only), e.g. `<DOCS_REPO_PATH>/en-us/Continia Banking`. The agent
+   * set (read-only), e.g. `<DOCS_REPO_PATH>/en-us/continia-banking`. The agent
    * searches ONLY this folder for existing articles + the next article id.
    */
   docsRepoPath: string;
-  /** Resolved product name (docs folder name), e.g. "Continia Banking". */
+  /** Resolved solution name, e.g. "Continia Banking". */
   productName: string;
   /** The product's article-id prefix, e.g. "CB". */
   idPrefix: string;
