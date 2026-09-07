@@ -244,7 +244,16 @@ export async function classifyDocsChange(
         );
         resultSubtype = message.subtype;
         if (message.subtype === 'success') {
-          result = message.result;
+          // The CLI reports subtype 'success' with is_error set when the turn
+          // itself failed — an API rejection (an unsupported request parameter,
+          // say) arrives that way, carrying its message in `result` and writing
+          // nothing to stderr. Without this branch the real error is dropped
+          // and the process's bare exit code is all that survives.
+          if (message.is_error) {
+            resultError = message.result?.trim() || undefined;
+          } else {
+            result = message.result;
+          }
         } else {
           const errs = message.errors?.length ? message.errors.join('; ') : '';
           resultError = errs || undefined;
@@ -254,7 +263,12 @@ export async function classifyDocsChange(
   } catch (err) {
     const base = err instanceof Error ? err.message : String(err);
     const stderr = stderrChunks.join('').trim();
-    throw new Error(`Classifier failed: ${base}${stderr ? `\n  stderr tail: ${stderr.slice(-2000)}` : ''}`);
+    // A failed result message usually arrives *before* the process exits, so
+    // without resultError here the diagnosis is just "exited with code 1" with
+    // an empty stderr — the actual cause is already in hand, so report it.
+    throw new Error(
+      `Classifier failed: ${base}${resultError ? `\n  result error: ${resultError}` : ''}${stderr ? `\n  stderr tail: ${stderr.slice(-2000)}` : ''}`,
+    );
   }
 
   // Fall back to the last assistant text when no success result arrived — the
