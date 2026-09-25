@@ -17,7 +17,7 @@ import * as sdk from '../sdk/azure-devops-client.ts';
 import * as gen from './generator.ts';
 import * as linker from './skill-linker.ts';
 import * as classifier from './classifier.ts';
-import type { ClassifierContext, DocsClassification } from './classifier.ts';
+import type { ClassifierContext, DocsClassification, ResolvedHome } from './classifier.ts';
 import { discoverSkills } from './skill-loader.ts';
 import { markdownToHtml, stripHtmlToText } from '../utils/html.ts';
 import { resolveProduct } from '../config/products.ts';
@@ -236,16 +236,20 @@ export function candidateNote(c: DocsClassification): string {
 
 /**
  * Resolve which product a work item belongs to and everything that hangs off
- * that: the product's docs folder (the ONLY folder the agent may search for
- * existing/related articles), its article-id prefix, and its AL source repo.
- * Returns a `productIssue` message instead when any of the three cannot be
- * resolved — the watcher posts it to the work item once and keeps the tag so
- * the item retries after the work item (or .env) is fixed.
+ * that: the product's docs home(s) (the ONLY folders the agent may search for
+ * existing/related articles, each with its article-id prefix), and its AL
+ * source repo. Returns a `productIssue` message instead when any of the three
+ * cannot be resolved — the watcher posts it to the work item once and keeps the
+ * tag so the item retries after the work item (or .env) is fixed.
+ *
+ * Homes that are not on disk are dropped rather than failing the item, so a
+ * multi-home product keeps working while one of its folders is mid-migration;
+ * only a product with no home left is an issue.
  */
 export function resolveItemProduct(
   config: AppConfig,
   workItem: WorkItemResponse,
-): { product: ProductInfo; docsSearchPath: string; targetRepoPath: string } | { productIssue: string } {
+): { product: ProductInfo; docsHomes: ResolvedHome[]; targetRepoPath: string } | { productIssue: string } {
   const fieldValue = String(workItem.fields[config.productField] ?? '');
   const product = resolveProduct(fieldValue);
   if (!product) {
@@ -256,25 +260,45 @@ export function resolveItemProduct(
         `Move the work item into a product area (or correct the field) and it will be picked up on the next poll.`,
     };
   }
-  const targetRepoPath = config.targetRepoPaths[product.prefix];
+  const targetRepoPath = config.targetRepoPaths[product.repoKey];
   if (!targetRepoPath) {
     return {
       productIssue:
-        `docsWriter resolved this work item to ${product.name} (${product.prefix}), ` +
-        `but no TARGET_REPO_PATH_${product.prefix} is configured, so the AL source cannot be read. ` +
+        `docsWriter resolved this work item to ${product.name} (${product.repoKey}), ` +
+        `but no TARGET_REPO_PATH_${product.repoKey} is configured, so the AL source cannot be read. ` +
         `Configure it in the docsWriter .env and the item will be picked up on the next poll.`,
     };
   }
-  const docsSearchPath = join(config.docsRepoPath, 'en-us', product.docsFolder);
-  if (!existsSync(docsSearchPath)) {
+  const attempted = product.homes.map((home) => ({
+    ...home,
+    path: join(config.docsRepoPath, 'en-us', home.docsFolder),
+  }));
+  const docsHomes = attempted.filter((home) => existsSync(home.path));
+  if (docsHomes.length === 0) {
     return {
       productIssue:
-        `docsWriter resolved this work item to ${product.name} (${product.prefix}), ` +
-        `but the docs folder was not found at ${docsSearchPath}. ` +
+        `docsWriter resolved this work item to ${product.name} (${product.repoKey}), ` +
+        `but the docs folder was not found at ${attempted.map((h) => h.path).join(' or ')}. ` +
         `Check DOCS_REPO_PATH and the docs repo checkout; the item will be picked up on the next poll.`,
     };
   }
-  return { product, docsSearchPath, targetRepoPath };
+  return { product, docsHomes, targetRepoPath };
+}
+
+/**
+ * The docs home the classifier decided on. The parser only ever returns a
+ * `docsFolder` it was given, so a miss means the decision and the homes came
+ * from different runs — fail loudly rather than drafting against a guess.
+ */
+function chosenHome(docsHomes: ResolvedHome[], classification: DocsClassification): ResolvedHome {
+  const home = docsHomes.find((h) => h.docsFolder === classification.docsFolder);
+  if (!home) {
+    throw new Error(
+      `Classifier chose docs home "${classification.docsFolder}", which is not one of ` +
+        `${docsHomes.map((h) => h.docsFolder).join(', ')}`,
+    );
+  }
+  return home;
 }
 
 export interface GatheredItem {
@@ -285,7 +309,7 @@ export interface GatheredItem {
   comments: string[];
   pullRequests: PrContext[];
   product: ProductInfo;
-  docsSearchPath: string;
+  docsHomes: ResolvedHome[];
   targetRepoPath: string;
 }
 
@@ -308,8 +332,11 @@ export async function gatherItemContext(
 
   const resolution = resolveItemProduct(config, workItem);
   if ('productIssue' in resolution) return resolution;
-  const { product, docsSearchPath, targetRepoPath } = resolution;
-  log(`  #${itemId}: Product: ${product.name} (${product.prefix}) — docs scope: ${docsSearchPath}`);
+  const { product, docsHomes, targetRepoPath } = resolution;
+  log(
+    `  #${itemId}: Product: ${product.name} (${product.repoKey}) — docs scope: ` +
+      docsHomes.map((h) => `${h.path} [${h.prefix}]`).join(', '),
+  );
 
   const rawComments = await deps.getWorkItemComments(config, itemId);
   const comments = rawComments
@@ -328,7 +355,7 @@ export async function gatherItemContext(
   }
   if (pullRequests.length > 0) log(`  #${itemId}: ${pullRequests.length} linked PR(s)`);
 
-  return { workItem, itemTitle, itemType, itemDescription, comments, pullRequests, product, docsSearchPath, targetRepoPath };
+  return { workItem, itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath };
 }
 
 /**
@@ -344,7 +371,7 @@ export async function classifyItem(
 ): Promise<{ classification: DocsClassification } | { productIssue: string }> {
   const gathered = await gatherItemContext(config, itemId, deps);
   if ('productIssue' in gathered) return gathered;
-  const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsSearchPath, targetRepoPath } = gathered;
+  const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath } = gathered;
   const classification = await deps.classifyDocs(
     { ...config, targetRepoPath },
     {
@@ -354,9 +381,8 @@ export async function classifyItem(
       itemDescription,
       comments,
       pullRequests,
-      docsRepoPath: docsSearchPath,
+      homes: docsHomes,
       productName: product.name,
-      idPrefix: product.prefix,
     },
   );
   return { classification };
@@ -380,7 +406,7 @@ export async function processDocsItem(
         productIssue: gathered.productIssue,
       };
     }
-    const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsSearchPath, targetRepoPath } = gathered;
+    const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath } = gathered;
     const effectiveConfig: AppConfig = { ...config, targetRepoPath };
 
     // Non-optional classifier phase: decide new-vs-update-vs-changelog BEFORE
@@ -394,12 +420,13 @@ export async function processDocsItem(
       itemDescription,
       comments,
       pullRequests,
-      docsRepoPath: docsSearchPath,
+      homes: docsHomes,
       productName: product.name,
-      idPrefix: product.prefix,
     });
+    const home = chosenHome(docsHomes, classification);
     log(
       `  #${itemId}: Classifier: ${classification.kind}` +
+        `${docsHomes.length > 1 ? ` in ${home.docsFolder}` : ''}` +
         `${classification.target ? ` → ${classification.target}` : ''}` +
         `${classification.candidates.length ? ` | candidates: ${classification.candidates.map((c) => c.id).join(', ')}` : ''}` +
         `${classification.reasoning ? `\n  #${itemId}: Classifier reasoning: ${classification.reasoning}` : ''}`,
@@ -425,9 +452,9 @@ export async function processDocsItem(
       pullRequests,
       discoveredSkills: discovered,
       outputPath,
-      docsRepoPath: docsSearchPath,
+      docsRepoPath: home.path,
       productName: product.name,
-      idPrefix: product.prefix,
+      idPrefix: home.prefix,
       classification,
     };
 

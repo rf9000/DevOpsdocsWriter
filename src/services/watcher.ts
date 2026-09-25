@@ -148,8 +148,8 @@ export async function startWatcher(config: AppConfig): Promise<void> {
   log(`Starting docsWriter — polling every ${config.pollIntervalMinutes} minutes`);
   log(`Watching tag: "${config.writeDocsTag}"`);
   log(`Product field: ${config.productField}`);
-  for (const [prefix, repo] of Object.entries(config.targetRepoPaths)) {
-    log(`Source repo [${prefix}]: ${repo}`);
+  for (const [repoKey, repo] of Object.entries(config.targetRepoPaths)) {
+    log(`Source repo [${repoKey}]: ${repo}`);
   }
   log(`Max ${config.maxDocsPerDay} articles per day`);
 

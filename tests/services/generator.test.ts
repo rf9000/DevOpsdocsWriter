@@ -23,7 +23,7 @@ function ctx(overrides: Partial<DocsContext> = {}): DocsContext {
     docsRepoPath: 'C:/repos/continia.docs.articles/en-us/Continia Banking',
     productName: 'Continia Banking',
     idPrefix: 'CB',
-    classification: { kind: 'newfeature' as const, candidates: [], reasoning: '' },
+    classification: { kind: 'newfeature' as const, docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: '' },
     ...overrides,
   };
 }
@@ -260,12 +260,15 @@ describe('buildSystemPrompt classification handoff', () => {
       ctx({
         classification: {
           kind: 'update',
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
           target: 'CB-33',
           targetFile: 'Reconciliation/Account identification methods.md',
           candidates: [
             {
               id: 'CB-161',
               file: 'Using Templates in Banking Import.md',
+              docsFolder: 'continia-banking',
               reason: 'documents templates',
             },
           ],
@@ -287,7 +290,7 @@ describe('buildSystemPrompt classification handoff', () => {
       promptPath,
       [],
       ctx({
-        classification: { kind: 'newfeature', candidates: [], reasoning: '' },
+        classification: { kind: 'newfeature', docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: '' },
       }),
     );
     expect(sys).toContain('already decided');
@@ -300,7 +303,7 @@ describe('buildSystemPrompt classification handoff', () => {
       promptPath,
       [],
       ctx({
-        classification: { kind: 'changelog', candidates: [], reasoning: '' },
+        classification: { kind: 'changelog', docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: '' },
       }),
     );
     expect(sys).toContain('already decided');

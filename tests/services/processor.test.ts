@@ -14,6 +14,7 @@ import {
 } from '../../src/services/processor.ts';
 import type { ProcessorDeps } from '../../src/services/processor.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
+import type { ClassifierContext } from '../../src/services/classifier.ts';
 import { mockConfig, mockWorkItem } from '../helpers.ts';
 
 let outDir: string;
@@ -48,6 +49,8 @@ function makeDeps(overrides: Partial<ProcessorDeps> = {}): ProcessorDeps {
     classifyDocs: mock(() =>
       Promise.resolve({
         kind: 'newfeature' as const,
+        docsFolder: 'continia-banking',
+        idPrefix: 'CB',
         candidates: [],
         reasoning: 'test default',
       }),
@@ -161,6 +164,8 @@ describe('processDocsItem', () => {
       classifyDocs: mock(() =>
         Promise.resolve({
           kind: 'update' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
           target: 'CB-23',
           candidates: [],
           reasoning: 'existing article documents the page',
@@ -191,7 +196,7 @@ describe('processDocsItem', () => {
     const config = cfg();
     const deps = makeDeps({
       classifyDocs: mock(() =>
-        Promise.resolve({ kind: 'update' as const, target: 'CB-23', candidates: [], reasoning: 'x' }),
+        Promise.resolve({ kind: 'update' as const, docsFolder: 'continia-banking', idPrefix: 'CB', target: 'CB-23', candidates: [], reasoning: 'x' }),
       ),
       generateDocs: mock(() =>
         Promise.resolve("I explored the code but couldn't find the feature, so I stopped."),
@@ -343,6 +348,8 @@ describe('processDocsItem', () => {
       classifyDocs: mock(() =>
         Promise.resolve({
           kind: 'update' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
           target: 'CB-142',
           candidates: [],
           reasoning: 'documented page',
@@ -375,9 +382,20 @@ describe('processDocsItem', () => {
   test('scopes the docs path to the resolved product folder and passes prefix + repo', async () => {
     let seenCtx: DocsContext | undefined;
     let seenCfg: AppConfig | undefined;
+    let seenClassifierCtx: ClassifierContext | undefined;
     const createSkillJunctions = mock(() => ['link-a']);
     const deps = makeDeps({
       createSkillJunctions,
+      classifyDocs: mock((_c: AppConfig, cctx: ClassifierContext) => {
+        seenClassifierCtx = cctx;
+        return Promise.resolve({
+          kind: 'newfeature' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
+          candidates: [],
+          reasoning: '',
+        });
+      }),
       generateDocs: mock((c: AppConfig, ctx: DocsContext) => {
         seenCfg = c;
         seenCtx = ctx;
@@ -390,6 +408,10 @@ describe('processDocsItem', () => {
 
     expect(result.documented).toBe(true);
     // mockWorkItem's area path is Continia Software\Continia Banking\Banking Connectivity
+    // A single-home product offers the classifier exactly one home.
+    expect(seenClassifierCtx!.homes).toEqual([
+      { docsFolder: 'continia-banking', prefix: 'CB', path: join(docsDir, 'en-us', 'continia-banking') },
+    ]);
     expect(seenCtx!.docsRepoPath).toBe(join(docsDir, 'en-us', 'continia-banking'));
     expect(seenCtx!.productName).toBe('Continia Banking');
     expect(seenCtx!.idPrefix).toBe('CB');
@@ -414,6 +436,15 @@ describe('processDocsItem', () => {
           }),
         ),
       ),
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'newfeature' as const,
+          docsFolder: 'continia-document-capture',
+          idPrefix: 'DC',
+          candidates: [],
+          reasoning: '',
+        }),
+      ),
       generateDocs: mock((c: AppConfig, ctx: DocsContext) => {
         seenCfg = c;
         seenCtx = ctx;
@@ -431,6 +462,137 @@ describe('processDocsItem', () => {
     expect(seenCfg!.targetRepoPath).toBe('C:/repos/al-doccapture');
     expect(seenCtx!.idPrefix).toBe('DC');
     expect(seenCtx!.docsRepoPath).toBe(join(docsDir, 'en-us', 'continia-document-capture'));
+  });
+
+  // Continia Delivery Network (area segment "Continia eDocuments") is the one
+  // product with two docs homes and an AL repo reached by repo key, not prefix.
+  function cdnItem() {
+    return mock(() =>
+      Promise.resolve(
+        mockWorkItem({
+          fields: {
+            'System.Title': 'eDocuments sending',
+            'System.WorkItemType': 'Feature',
+            'System.AreaPath': 'Continia Software\\Continia eDocuments',
+          },
+        }),
+      ),
+    );
+  }
+
+  function cdnClassifier(docsFolder: string, idPrefix: string) {
+    return mock(() =>
+      Promise.resolve({
+        kind: 'newfeature' as const,
+        docsFolder,
+        idPrefix,
+        candidates: [],
+        reasoning: '',
+      }),
+    );
+  }
+
+  test('a Delivery Network item offers both docs homes and uses TARGET_REPO_PATH_CDN', async () => {
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-capture'), { recursive: true });
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-output'), { recursive: true });
+    let seenClassifierCtx: ClassifierContext | undefined;
+    let seenCfg: AppConfig | undefined;
+    const deps = makeDeps({
+      getWorkItem: cdnItem(),
+      classifyDocs: mock((c: AppConfig, cctx: ClassifierContext) => {
+        seenCfg = c;
+        seenClassifierCtx = cctx;
+        return Promise.resolve({
+          kind: 'newfeature' as const,
+          docsFolder: 'continia-document-capture',
+          idPrefix: 'DC',
+          candidates: [],
+          reasoning: '',
+        });
+      }),
+    });
+    const config = cfg({ targetRepoPaths: { CB: 'C:/repos/al-banking', CDN: 'C:/repos/al-cdn' } });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(seenClassifierCtx!.productName).toBe('Continia Delivery Network');
+    // Both homes reach the classifier, in registry order (DC then DO).
+    expect(seenClassifierCtx!.homes).toEqual([
+      { docsFolder: 'continia-document-capture', prefix: 'DC', path: join(docsDir, 'en-us', 'continia-document-capture') },
+      { docsFolder: 'continia-document-output', prefix: 'DO', path: join(docsDir, 'en-us', 'continia-document-output') },
+    ]);
+    expect(seenCfg!.targetRepoPath).toBe('C:/repos/al-cdn');
+  });
+
+  test('a docs home that is missing on disk is dropped, the product still runs', async () => {
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-output'), { recursive: true });
+    let seenClassifierCtx: ClassifierContext | undefined;
+    const deps = makeDeps({
+      getWorkItem: cdnItem(),
+      classifyDocs: mock((_c: AppConfig, cctx: ClassifierContext) => {
+        seenClassifierCtx = cctx;
+        return Promise.resolve({
+          kind: 'newfeature' as const,
+          docsFolder: 'continia-document-output',
+          idPrefix: 'DO',
+          candidates: [],
+          reasoning: '',
+        });
+      }),
+    });
+    const config = cfg({ targetRepoPaths: { CDN: 'C:/repos/al-cdn' } });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(seenClassifierCtx!.homes).toHaveLength(1);
+    expect(seenClassifierCtx!.homes[0]!.prefix).toBe('DO');
+  });
+
+  test('a Delivery Network item with neither docs home → productIssue naming both paths', async () => {
+    const deps = makeDeps({ getWorkItem: cdnItem() });
+    const config = cfg({ targetRepoPaths: { CDN: 'C:/repos/al-cdn' } });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(false);
+    expect(result.productIssue).toContain(join(docsDir, 'en-us', 'continia-document-capture'));
+    expect(result.productIssue).toContain(join(docsDir, 'en-us', 'continia-document-output'));
+    expect(deps.generateDocs).toHaveBeenCalledTimes(0);
+  });
+
+  test('a Delivery Network item without TARGET_REPO_PATH_CDN → productIssue naming that var', async () => {
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-capture'), { recursive: true });
+    const deps = makeDeps({ getWorkItem: cdnItem() });
+
+    const result = await processDocsItem(cfg(), 42, deps); // only CB configured
+
+    expect(result.documented).toBe(false);
+    expect(result.productIssue).toContain('TARGET_REPO_PATH_CDN');
+  });
+
+  test('the home the classifier chose drives the drafting context', async () => {
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-capture'), { recursive: true });
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-output'), { recursive: true });
+    let seenCtx: DocsContext | undefined;
+    const deps = makeDeps({
+      getWorkItem: cdnItem(),
+      classifyDocs: cdnClassifier('continia-document-output', 'DO'),
+      generateDocs: mock((_c: AppConfig, ctx: DocsContext) => {
+        seenCtx = ctx;
+        writeFileSync(ctx.outputPath, '# Article\n');
+        return Promise.resolve('ok');
+      }),
+    });
+    const config = cfg({ targetRepoPaths: { CDN: 'C:/repos/al-cdn' } });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(seenCtx!.docsRepoPath).toBe(join(docsDir, 'en-us', 'continia-document-output'));
+    expect(seenCtx!.idPrefix).toBe('DO');
+    expect(seenCtx!.productName).toBe('Continia Delivery Network');
   });
 
   test('unmapped area path → productIssue, no agent run, no junctions', async () => {
@@ -479,7 +641,7 @@ describe('processDocsItem', () => {
     expect(result.productIssue).toContain('TARGET_REPO_PATH_DC');
   });
 
-  test('missing product docs folder → productIssue', async () => {
+  test('missing product docs folder → productIssue listing the path tried', async () => {
     rmSync(join(docsDir, 'en-us', 'continia-banking'), { recursive: true, force: true });
     const deps = makeDeps();
 
@@ -487,6 +649,7 @@ describe('processDocsItem', () => {
 
     expect(result.documented).toBe(false);
     expect(result.productIssue).toContain('docs folder was not found');
+    expect(result.productIssue).toContain(join(docsDir, 'en-us', 'continia-banking'));
   });
 
   test('a changelog deliverable is named and framed as a changelog entry', async () => {
@@ -494,7 +657,7 @@ describe('processDocsItem', () => {
     const addWorkItemComment = mock(() => Promise.resolve({}));
     const deps = makeDeps({
       classifyDocs: mock(() =>
-        Promise.resolve({ kind: 'changelog' as const, candidates: [], reasoning: 'bug fix' }),
+        Promise.resolve({ kind: 'changelog' as const, docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: 'bug fix' }),
       ),
       generateDocs: mock((_cfg, ctx: DocsContext) => {
         writeFileSync(ctx.outputPath, 'Changelog: fixed a rounding bug.\n');
@@ -518,6 +681,8 @@ describe('processDocsItem', () => {
       classifyDocs: mock(() =>
         Promise.resolve({
           kind: 'update' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
           target: 'CB-33',
           targetFile: 'Reconciliation/Account identification methods.md',
           candidates: [],
@@ -544,7 +709,7 @@ describe('processDocsItem', () => {
     let seen: DocsContext | undefined;
     const deps = makeDeps({
       classifyDocs: mock(() =>
-        Promise.resolve({ kind: 'changelog' as const, candidates: [], reasoning: 'bug fix' }),
+        Promise.resolve({ kind: 'changelog' as const, docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: 'bug fix' }),
       ),
       generateDocs: mock((_cfg, ctx: DocsContext) => {
         seen = ctx;
@@ -579,9 +744,11 @@ describe('processDocsItem', () => {
       classifyDocs: mock(() =>
         Promise.resolve({
           kind: 'newfeature' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
           candidates: [
-            { id: 'CB-33', file: 'Reconciliation/Account identification methods.md', reason: 'documents the rules page' },
-            { id: 'CB-161', file: 'Using Templates in Banking Import.md', reason: 'documents templates' },
+            { id: 'CB-33', file: 'Reconciliation/Account identification methods.md', docsFolder: 'continia-banking', reason: 'documents the rules page' },
+            { id: 'CB-161', file: 'Using Templates in Banking Import.md', docsFolder: 'continia-banking', reason: 'documents templates' },
           ],
           reasoning: '',
         }),
@@ -604,8 +771,10 @@ describe('processDocsItem', () => {
       classifyDocs: mock(() =>
         Promise.resolve({
           kind: 'update' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
           target: 'CB-33',
-          candidates: [{ id: 'CB-161', file: '', reason: 'templates concept' }],
+          candidates: [{ id: 'CB-161', file: '', docsFolder: 'continia-banking', reason: 'templates concept' }],
           reasoning: '',
         }),
       ),
@@ -635,7 +804,7 @@ describe('classifyItem', () => {
     const config = cfg();
     const deps = makeDeps({
       classifyDocs: mock(() =>
-        Promise.resolve({ kind: 'update' as const, target: 'CB-33', candidates: [], reasoning: 'r' }),
+        Promise.resolve({ kind: 'update' as const, docsFolder: 'continia-banking', idPrefix: 'CB', target: 'CB-33', candidates: [], reasoning: 'r' }),
       ),
     });
 
