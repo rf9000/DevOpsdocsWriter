@@ -51,6 +51,23 @@ export interface DocsClassification {
   reasoning: string;
 }
 
+/**
+ * How an article's path is shown to a human (the work-item comment) or to the
+ * drafting agent. Paths are stored relative to the docs home the article lives
+ * in, so one from a home other than the deliverable's is qualified with its
+ * folder. For a single-home product that can never happen and the path reads
+ * exactly as it did before multi-home products existed.
+ */
+export function renderArticlePath(
+  article: { file: string; docsFolder: string },
+  deliverableDocsFolder: string,
+): string {
+  if (!article.file) return '';
+  return article.docsFolder === deliverableDocsFolder
+    ? article.file
+    : `${article.docsFolder}/${article.file}`;
+}
+
 /** Everything the classifier needs to decide; a strict subset of DocsContext. */
 export interface ClassifierContext {
   itemId: number;

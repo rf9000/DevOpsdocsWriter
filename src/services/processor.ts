@@ -227,7 +227,10 @@ export function extractCommentBody(agentMessage: string): string {
 export function candidateNote(c: DocsClassification): string {
   if (c.candidates.length === 0) return '';
   const list = c.candidates
-    .map((x) => `- ${x.id}${x.file ? ` (\`${x.file}\`)` : ''}${x.reason ? ` — ${x.reason}` : ''}`)
+    .map((x) => {
+      const path = classifier.renderArticlePath(x, c.docsFolder);
+      return `- ${x.id}${path ? ` (\`${path}\`)` : ''}${x.reason ? ` — ${x.reason}` : ''}`;
+    })
     .join('\n');
   return c.kind === 'newfeature'
     ? `\n\n**Possible existing homes** — a new article was written, but these articles may be candidates for updating instead:\n${list}`

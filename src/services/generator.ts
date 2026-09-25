@@ -5,6 +5,7 @@ import type { PermissionResult } from '@anthropic-ai/claude-agent-sdk';
 import type { AppConfig, PrContext } from '../types/index.ts';
 import type { DiscoveredSkill } from './skill-loader.ts';
 import type { DocsClassification } from './classifier.ts';
+import { renderArticlePath } from './classifier.ts';
 
 const DENIED_BASH_PATTERNS = [
   /\bgit\s+(push|commit|merge|rebase|reset|checkout|branch\s+-[dD]|stash\s+drop|clean|tag\s+-d)/,
@@ -309,13 +310,16 @@ export function buildSystemPrompt(
 function renderDecidedClassification(context: DocsContext): string {
   const c = context.classification;
   const lines: string[] = [];
+  const targetFile = c.targetFile
+    ? renderArticlePath({ file: c.targetFile, docsFolder: c.docsFolder }, c.docsFolder)
+    : '';
   const disagree =
     `If, while drafting, you find strong evidence this decision is wrong, still produce the decided kind and add one line to the work-item comment starting with "Classifier disagreement:" explaining why.`;
   const marker = `Echo exactly this decision in the \`<<<DOCS-OUTPUT-KIND>>>\` marker.`;
 
   if (c.kind === 'update') {
     lines.push(
-      `- **Classification (already decided — do NOT re-classify).** An upstream classifier examined the changed AL objects and the docs set and decided: this run produces a DELTA UPDATE NOTE targeting the existing article **${c.target}**${c.targetFile ? ` (\`${c.targetFile}\`)` : ''}. Do not search for a different target and do not mint a new id. ${disagree} ${marker}`,
+      `- **Classification (already decided — do NOT re-classify).** An upstream classifier examined the changed AL objects and the docs set and decided: this run produces a DELTA UPDATE NOTE targeting the existing article **${c.target}**${targetFile ? ` (\`${targetFile}\`)` : ''}. Do not search for a different target and do not mint a new id. ${disagree} ${marker}`,
       `- The delta note is read by a human writer and MUST use the scaffold from \`code-to-docs.md\` §6: open with \`# Update to ${c.target} — <article title>\`, then a blockquote banner stating it is an update to an existing article (not a standalone page), then \`Target file:\` and \`Work item:\` lines, then \`## What changed\`, \`## Suggested edits\`, and \`## Points to verify before publishing\`. A delta note delivered as bare content without this scaffold is a FAILED output — proportionality caps the edits' content, never the scaffold.`,
       `- **The delta note is a FILE deliverable, not a chat reply.** Even though a human writer will read it, it is delivered exactly like a full article: you MUST \`Write\` it to the output path AND mirror it verbatim in the \`<<<ARTICLE>>>\` block. Do NOT deliver it only as your final message, and do NOT describe it as a file to "discard" or "apply then delete" — writing it to the output path is the entire point of this run, and a run that ends without that file is a FAILED run.`,
     );
@@ -331,7 +335,12 @@ function renderDecidedClassification(context: DocsContext): string {
 
   if (c.candidates.length > 0) {
     lines.push(
-      `- Related existing articles found by the classifier (for cross-links${c.kind === 'newfeature' ? '; the pipeline already tells the work item they may be merge candidates' : ''}): ${c.candidates.map((x) => `${x.id}${x.file ? ` (\`${x.file}\`)` : ''}`).join(', ')}.`,
+      `- Related existing articles found by the classifier (for cross-links${c.kind === 'newfeature' ? '; the pipeline already tells the work item they may be merge candidates' : ''}): ${c.candidates
+        .map((x) => {
+          const path = renderArticlePath(x, c.docsFolder);
+          return `${x.id}${path ? ` (\`${path}\`)` : ''}`;
+        })
+        .join(', ')}.`,
     );
   }
 

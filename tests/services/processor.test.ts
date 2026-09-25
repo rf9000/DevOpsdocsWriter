@@ -11,6 +11,7 @@ import {
   recoverDeliverableFromMessage,
   extractOutputKind,
   deliverableFileName,
+  candidateNote,
 } from '../../src/services/processor.ts';
 import type { ProcessorDeps } from '../../src/services/processor.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
@@ -786,6 +787,61 @@ describe('processDocsItem', () => {
     const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
     expect(comment).toContain('Also relates to');
     expect(comment).toContain('CB-161');
+  });
+});
+
+describe('candidateNote', () => {
+  test('a candidate in the deliverable home keeps its bare relative path', () => {
+    const note = candidateNote({
+      kind: 'newfeature',
+      docsFolder: 'continia-document-output',
+      idPrefix: 'DO',
+      candidates: [
+        {
+          id: 'DO-2',
+          file: 'business-functionality/continia-edocuments/sending.md',
+          docsFolder: 'continia-document-output',
+          reason: 'sending side',
+        },
+      ],
+      reasoning: '',
+    });
+    expect(note).toContain('`business-functionality/continia-edocuments/sending.md`');
+    expect(note).not.toContain('continia-document-output/business-functionality');
+  });
+
+  test('a candidate in the other docs home is qualified with its folder', () => {
+    const note = candidateNote({
+      kind: 'update',
+      docsFolder: 'continia-document-output',
+      idPrefix: 'DO',
+      target: 'DO-9',
+      candidates: [
+        {
+          id: 'DC-1',
+          file: 'business-functionality/continia-edocuments/receiving.md',
+          docsFolder: 'continia-document-capture',
+          reason: 'capture side',
+        },
+      ],
+      reasoning: '',
+    });
+    expect(note).toContain('Also relates to');
+    expect(note).toContain(
+      '`continia-document-capture/business-functionality/continia-edocuments/receiving.md`',
+    );
+  });
+
+  test('is empty without candidates', () => {
+    expect(
+      candidateNote({
+        kind: 'newfeature',
+        docsFolder: 'continia-banking',
+        idPrefix: 'CB',
+        candidates: [],
+        reasoning: '',
+      }),
+    ).toBe('');
   });
 });
 
