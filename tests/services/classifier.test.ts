@@ -117,6 +117,18 @@ describe('parseClassification', () => {
     expect(result!.candidates[0]!.docsFolder).toBe('continia-banking');
   });
 
+  // The target id names the deliverable, so an id from outside the product is a
+  // worse signal than a stray candidate — which is already dropped. It must
+  // fail closed whether the product has one home or several.
+  test('a single-home update whose target prefix is not the home prefix fails closed', () => {
+    expect(
+      parseClassification(
+        wrap(JSON.stringify({ kind: 'update', target: 'DO-1', targetFile: 'x.md', candidates: [] })),
+        [CB],
+      ),
+    ).toBeNull();
+  });
+
   test('a single home is used even when the agent names one', () => {
     const result = parseClassification(
       wrap(JSON.stringify({ kind: 'newfeature', home: 'continia-document-output', candidates: [] })),
@@ -159,6 +171,27 @@ describe('parseClassification', () => {
     expect(
       parseClassification(wrap(JSON.stringify({ kind: 'newfeature', candidates: [] })), CDN_HOMES),
     ).toBeNull();
+  });
+
+  // The run scope lists the homes as absolute paths and their folder names, so
+  // the agent can plausibly answer with either spelling. A near-miss must not
+  // stall the item forever — only a genuinely foreign folder fails closed.
+  test('the named home is matched leniently on case, whitespace and path form', () => {
+    const forms = [
+      'continia-document-capture',
+      '  Continia-Document-Capture  ',
+      'continia-document-capture/',
+      'C:/docs/en-us/continia-document-capture',
+      'en-us/continia-document-capture',
+      'continia-document-capture/business-functionality/continia-edocuments',
+    ];
+    for (const home of forms) {
+      const result = parseClassification(
+        wrap(JSON.stringify({ kind: 'newfeature', home, candidates: [] })),
+        CDN_HOMES,
+      );
+      expect(result?.docsFolder).toBe('continia-document-capture');
+    }
   });
 
   test('a multi-home newfeature naming a folder outside the product fails closed', () => {
@@ -258,13 +291,25 @@ describe('buildClassifierSystemPrompt', () => {
     }
   });
 
-  // A single-home product must not see any of the multi-home wording — the nine
-  // existing products get the prompt they got before Delivery Network existed.
-  test('a single-home product is never asked to choose a home', () => {
+  // The interpolated run scope — everything this function adds on top of
+  // classify-docs.md — must be byte-identical to what it was before Delivery
+  // Network existed, so the nine single-home products see no change from the
+  // per-run half of their prompt. This says nothing about classify-docs.md
+  // itself, which is shared by all ten products and did gain multi-home
+  // clauses; those are written to be inert for a single-home run.
+  test('the run scope of a single-home product is the pre-multi-home text', () => {
     setup();
     try {
-      const sys = buildClassifierSystemPrompt(promptPath, mockClassifierContext());
-      expect(sys.toLowerCase()).not.toContain('home');
+      const base = 'BASE CLASSIFIER PROMPT';
+      const runScope = buildClassifierSystemPrompt(promptPath, mockClassifierContext()).slice(
+        `${base}\n\n`.length,
+      );
+      expect(runScope).toBe(
+        `## Run scope\n\n` +
+          `- This work item belongs to the product **Continia Banking** (article-id prefix \`CB\`).\n` +
+          `- The published docs set for Continia Banking is at \`C:/docs/en-us/Continia Banking\` — this is the product's own folder and it is READ-ONLY. Search ONLY inside this folder; never scan other products' folders.\n` +
+          `- Article ids in \`target\` and \`candidates\` must use the \`CB-###\` form and must exist in that folder.`,
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -97,6 +97,22 @@ function homeOfId(id: string, homes: readonly DocsHome[]): DocsHome | undefined 
 }
 
 /**
+ * The home the agent named in its `home` field. The run scope lists each home
+ * as an absolute path AND spells the bare folder names, so the agent can
+ * plausibly answer with either — and may answer with a path that reaches into
+ * the folder. Match on the path segments rather than the whole string, so a
+ * near-miss resolves instead of stalling the item; a folder that belongs to no
+ * home still returns undefined and the caller fails closed.
+ */
+function homeNamed(named: string, homes: readonly DocsHome[]): DocsHome | undefined {
+  const segments = named
+    .split(/[\\/]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return homes.find((h) => segments.includes(h.docsFolder.toLowerCase()));
+}
+
+/**
  * Parse the classifier agent's `<<<CLASSIFICATION>>>` JSON block. Strict on
  * the decision itself (unknown kind, an update without a valid target, or a
  * deliverable whose docs home cannot be resolved is a parse failure → null, so
@@ -131,17 +147,19 @@ export function parseClassification(
     typeof obj.target === 'string' ? obj.target.trim().toUpperCase() : undefined;
   if (kind === 'update' && (!target || !ARTICLE_ID_RE.test(target))) return null;
 
-  // Resolve the docs home the deliverable belongs to. One home → no choice to
-  // make (and an agent-supplied `home` is ignored). Several → the target's
-  // prefix decides an update; anything else must be named explicitly.
+  // Resolve the docs home the deliverable belongs to. An update always derives
+  // it from the target id's prefix — including for a single-home product, where
+  // a foreign prefix means the agent picked an article from another product and
+  // the whole decision is unusable. Anything else uses the one home when there
+  // is one, and otherwise must be named explicitly.
   let home: DocsHome | undefined;
-  if (homes.length === 1) {
-    home = homes[0];
-  } else if (kind === 'update') {
+  if (kind === 'update') {
     home = homeOfId(target!, homes);
+  } else if (homes.length === 1) {
+    home = homes[0];
   } else {
-    const named = typeof obj.home === 'string' ? obj.home.trim() : '';
-    home = named ? homes.find((h) => h.docsFolder === named) : undefined;
+    const named = typeof obj.home === 'string' ? obj.home : '';
+    home = named ? homeNamed(named, homes) : undefined;
   }
   if (!home) return null;
 
@@ -387,8 +405,16 @@ export async function classifyDocsChange(
     parseClassification(assistantTexts.join('\n'), context.homes);
   if (!classification) {
     const tail = finalText.trim().slice(-1500);
+    // The block may well be present and valid JSON and still not parse — a
+    // multi-home run whose `home` names no folder of this product, or a target
+    // id from another product, both fail closed here. Say so, or the operator
+    // hunts for a missing block that is right there in the tail below.
+    const homeHint =
+      context.homes.length > 1
+        ? ` The block must also name one of this product's docs homes (${context.homes.map((h) => h.docsFolder).join(', ')}) — in \`home\` for a newfeature/changelog, or through the \`target\` id's prefix for an update.`
+        : '';
     throw new Error(
-      `Classifier returned no parseable <<<CLASSIFICATION>>> block (subtype=${resultSubtype ?? 'none'}, checked the final message and the full run text). Final message tail:\n${tail}`,
+      `Classifier returned no usable <<<CLASSIFICATION>>> block — absent, malformed, or its docs home could not be resolved (subtype=${resultSubtype ?? 'none'}, checked the final message and the full run text).${homeHint} Final message tail:\n${tail}`,
     );
   }
   return classification;

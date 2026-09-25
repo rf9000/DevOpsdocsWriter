@@ -12,10 +12,12 @@ import {
   extractOutputKind,
   deliverableFileName,
   candidateNote,
+  resolveItemProduct,
+  targetFileHomeMismatch,
 } from '../../src/services/processor.ts';
 import type { ProcessorDeps } from '../../src/services/processor.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
-import type { ClassifierContext } from '../../src/services/classifier.ts';
+import type { ClassifierContext, ResolvedHome } from '../../src/services/classifier.ts';
 import { mockConfig, mockWorkItem } from '../helpers.ts';
 
 let outDir: string;
@@ -551,6 +553,34 @@ describe('processDocsItem', () => {
     expect(seenClassifierCtx!.homes[0]!.prefix).toBe('DO');
   });
 
+  // Dropping a home silently would classify a capture-side change into the
+  // output folder with nothing in the record to explain it.
+  test('a docs home missing on disk is reported, not just dropped', () => {
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-output'), { recursive: true });
+    const resolution = resolveItemProduct(
+      cfg({ targetRepoPaths: { CDN: 'C:/repos/al-cdn' } }),
+      mockWorkItem({ fields: { 'System.AreaPath': 'Continia Software\\Continia eDocuments' } }),
+    );
+
+    expect('productIssue' in resolution).toBe(false);
+    if ('productIssue' in resolution) return;
+    expect(resolution.docsHomes.map((h) => h.prefix)).toEqual(['DO']);
+    expect(resolution.missingHomes.map((h) => h.docsFolder)).toEqual([
+      'continia-document-capture',
+    ]);
+    expect(resolution.missingHomes[0]!.path).toBe(
+      join(docsDir, 'en-us', 'continia-document-capture'),
+    );
+  });
+
+  test('a product whose homes all exist reports none missing', () => {
+    const resolution = resolveItemProduct(cfg(), mockWorkItem());
+
+    expect('productIssue' in resolution).toBe(false);
+    if ('productIssue' in resolution) return;
+    expect(resolution.missingHomes).toEqual([]);
+  });
+
   test('a Delivery Network item with neither docs home → productIssue naming both paths', async () => {
     const deps = makeDeps({ getWorkItem: cdnItem() });
     const config = cfg({ targetRepoPaths: { CDN: 'C:/repos/al-cdn' } });
@@ -571,6 +601,41 @@ describe('processDocsItem', () => {
 
     expect(result.documented).toBe(false);
     expect(result.productIssue).toContain('TARGET_REPO_PATH_CDN');
+  });
+
+  test('a target file that lives in the other docs home is flagged in the comment', async () => {
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-capture'), { recursive: true });
+    mkdirSync(join(docsDir, 'en-us', 'continia-document-output', 'sub'), { recursive: true });
+    writeFileSync(join(docsDir, 'en-us', 'continia-document-output', 'sub', 'sending.md'), '# S\n');
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      getWorkItem: cdnItem(),
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'update' as const,
+          docsFolder: 'continia-document-capture',
+          idPrefix: 'DC',
+          target: 'DC-7',
+          targetFile: 'sub/sending.md',
+          candidates: [],
+          reasoning: '',
+        }),
+      ),
+      generateDocs: mock((_c: AppConfig, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, '# Update to DC-7\n');
+        return Promise.resolve('<<<WORKITEM-COMMENT>>>\nDelta note.\n<<<END-WORKITEM-COMMENT>>>');
+      }),
+      addWorkItemComment,
+    });
+    const config = cfg({ targetRepoPaths: { CDN: 'C:/repos/al-cdn' } });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('continia-document-output');
+    expect(comment).toContain('sub/sending.md');
+    expect(comment).toContain('DC-7');
   });
 
   test('the home the classifier chose drives the drafting context', async () => {
@@ -787,6 +852,76 @@ describe('processDocsItem', () => {
     const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
     expect(comment).toContain('Also relates to');
     expect(comment).toContain('CB-161');
+  });
+});
+
+// `target` and `targetFile` are two signals for the same thing. The prefix wins
+// (it names the deliverable), but when the file plainly lives in the other home
+// the two contradict each other and a human has to see it.
+describe('targetFileHomeMismatch', () => {
+  let homes: ResolvedHome[];
+
+  beforeEach(() => {
+    docsDir = mkdtempSync(join(tmpdir(), 'mismatch-'));
+    homes = [
+      { docsFolder: 'continia-document-capture', prefix: 'DC', path: join(docsDir, 'continia-document-capture') },
+      { docsFolder: 'continia-document-output', prefix: 'DO', path: join(docsDir, 'continia-document-output') },
+    ];
+    for (const h of homes) mkdirSync(join(h.path, 'sub'), { recursive: true });
+  });
+  afterEach(() => rmSync(docsDir, { recursive: true, force: true }));
+
+  const update = (target: string, targetFile: string, docsFolder: string, idPrefix: string) => ({
+    kind: 'update' as const,
+    docsFolder,
+    idPrefix,
+    target,
+    targetFile,
+    candidates: [],
+    reasoning: '',
+  });
+
+  test('reports the other home when the target file only exists there', () => {
+    writeFileSync(join(homes[1]!.path, 'sub', 'sending.md'), '# Sending\n');
+    const other = targetFileHomeMismatch(
+      update('DC-7', 'sub/sending.md', 'continia-document-capture', 'DC'),
+      homes,
+    );
+    expect(other?.docsFolder).toBe('continia-document-output');
+  });
+
+  test('reports nothing when the target file is in the chosen home', () => {
+    writeFileSync(join(homes[0]!.path, 'sub', 'receiving.md'), '# Receiving\n');
+    expect(
+      targetFileHomeMismatch(
+        update('DC-7', 'sub/receiving.md', 'continia-document-capture', 'DC'),
+        homes,
+      ),
+    ).toBeUndefined();
+  });
+
+  test('reports nothing when the file exists in neither home (a stale or wrong path)', () => {
+    expect(
+      targetFileHomeMismatch(
+        update('DC-7', 'sub/gone.md', 'continia-document-capture', 'DC'),
+        homes,
+      ),
+    ).toBeUndefined();
+  });
+
+  test('reports nothing for a decision with no target file', () => {
+    expect(
+      targetFileHomeMismatch(
+        {
+          kind: 'newfeature',
+          docsFolder: 'continia-document-capture',
+          idPrefix: 'DC',
+          candidates: [],
+          reasoning: '',
+        },
+        homes,
+      ),
+    ).toBeUndefined();
   });
 });
 
