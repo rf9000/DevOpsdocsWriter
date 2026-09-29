@@ -10,7 +10,12 @@ export interface AppConfig {
    * the entry from `targetRepoPaths` for the resolved product.
    */
   targetRepoPath: string;
-  /** Per-product AL source repos, keyed by article-id prefix (from `TARGET_REPO_PATH_<PREFIX>` env vars). */
+  /**
+   * Per-product AL source repos, keyed by the product's repo key (from
+   * `TARGET_REPO_PATH_<REPOKEY>` env vars). The repo key equals the article-id
+   * prefix for every product with a docs folder of its own; Continia Delivery
+   * Network, which borrows the DC and DO folders, uses `CDN`.
+   */
   targetRepoPaths: Record<string, string>;
   /** Work item field that identifies the product (default `System.AreaPath`). */
   productField: string;

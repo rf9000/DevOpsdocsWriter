@@ -2,13 +2,25 @@ import { readFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { AppConfig, OutputKind, PrContext } from '../types/index.ts';
+import type { DocsHome } from '../config/products.ts';
+
+/** One of a product's docs homes, located on disk. */
+export type ResolvedHome = DocsHome & {
+  /** Absolute path to the folder, e.g. `<DOCS_REPO_PATH>/en-us/continia-banking`. */
+  path: string;
+};
 
 /** An existing article that could plausibly own the change. */
 export interface ClassificationCandidate {
   /** Article id, e.g. `CB-161`. */
   id: string;
-  /** Path of the article file, relative to the product docs folder. */
+  /** Path of the article file, relative to `docsFolder`. */
   file: string;
+  /**
+   * The docs home this candidate lives in, derived from its id prefix. Equal to
+   * the decision's `docsFolder` for every single-home product.
+   */
+  docsFolder: string;
   /** One line: why this article is a plausible home. */
   reason: string;
 }
@@ -21,14 +33,39 @@ export interface ClassificationCandidate {
  */
 export interface DocsClassification {
   kind: OutputKind;
+  /**
+   * The docs home the deliverable belongs to — one of the product's
+   * `docsFolder`s. The only product with a real choice here is Continia
+   * Delivery Network; everyone else has exactly one home.
+   */
+  docsFolder: string;
+  /** The article-id prefix of that home, e.g. "DO". */
+  idPrefix: string;
   /** Existing article id an update targets (required when kind is `update`). */
   target?: string;
-  /** Product-docs-folder-relative path of the target article (when kind is `update`). */
+  /** Path of the target article, relative to `docsFolder` (when kind is `update`). */
   targetFile?: string;
   /** Other plausible homes for the change (may be empty). */
   candidates: ClassificationCandidate[];
   /** Short justification, logged for diagnosis. */
   reasoning: string;
+}
+
+/**
+ * How an article's path is shown to a human (the work-item comment) or to the
+ * drafting agent. Paths are stored relative to the docs home the article lives
+ * in, so one from a home other than the deliverable's is qualified with its
+ * folder. For a single-home product that can never happen and the path reads
+ * exactly as it did before multi-home products existed.
+ */
+export function renderArticlePath(
+  article: { file: string; docsFolder: string },
+  deliverableDocsFolder: string,
+): string {
+  if (!article.file) return '';
+  return article.docsFolder === deliverableDocsFolder
+    ? article.file
+    : `${article.docsFolder}/${article.file}`;
 }
 
 /** Everything the classifier needs to decide; a strict subset of DocsContext. */
@@ -39,12 +76,13 @@ export interface ClassifierContext {
   itemDescription: string;
   comments: string[];
   pullRequests: PrContext[];
-  /** The product's folder inside the docs set (read-only), e.g. `<DOCS_REPO_PATH>/en-us/continia-banking`. */
-  docsRepoPath: string;
+  /**
+   * The product's docs homes that exist on disk (read-only), in tie-break
+   * order. One entry for every product but Continia Delivery Network.
+   */
+  homes: ResolvedHome[];
   /** Resolved solution name, e.g. "Continia Banking". */
   productName: string;
-  /** The product's article-id prefix, e.g. "CB". */
-  idPrefix: string;
 }
 
 const CLASSIFICATION_BLOCK_RE =
@@ -52,14 +90,44 @@ const CLASSIFICATION_BLOCK_RE =
 
 const ARTICLE_ID_RE = /^[A-Z][A-Z0-9]*-\d+$/;
 
+/** The home an article id belongs to, identified by its prefix. */
+function homeOfId(id: string, homes: readonly DocsHome[]): DocsHome | undefined {
+  const prefix = id.slice(0, id.lastIndexOf('-'));
+  return homes.find((h) => h.prefix === prefix);
+}
+
+/**
+ * The home the agent named in its `home` field. The run scope lists each home
+ * as an absolute path AND spells the bare folder names, so the agent can
+ * plausibly answer with either — and may answer with a path that reaches into
+ * the folder. Match on the path segments rather than the whole string, so a
+ * near-miss resolves instead of stalling the item; a folder that belongs to no
+ * home still returns undefined and the caller fails closed.
+ */
+function homeNamed(named: string, homes: readonly DocsHome[]): DocsHome | undefined {
+  const segments = named
+    .split(/[\\/]+/)
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return homes.find((h) => segments.includes(h.docsFolder.toLowerCase()));
+}
+
 /**
  * Parse the classifier agent's `<<<CLASSIFICATION>>>` JSON block. Strict on
- * the decision itself (unknown kind or an update without a valid target is a
- * parse failure → null, so the pipeline fails closed and retries), lenient on
- * the informational fields (malformed candidates are dropped, missing
- * reasoning defaults to empty).
+ * the decision itself (unknown kind, an update without a valid target, or a
+ * deliverable whose docs home cannot be resolved is a parse failure → null, so
+ * the pipeline fails closed and retries), lenient on the informational fields
+ * (malformed candidates are dropped, missing reasoning defaults to empty).
+ *
+ * `homes` are the product's docs homes. With one home everything resolves to
+ * it and the agent is never asked. With several (Continia Delivery Network),
+ * an `update` derives its home from the target id's prefix, while a
+ * `newfeature` / `changelog` must name it in a `home` field.
  */
-export function parseClassification(agentMessage: string): DocsClassification | null {
+export function parseClassification(
+  agentMessage: string,
+  homes: readonly DocsHome[],
+): DocsClassification | null {
   const block = CLASSIFICATION_BLOCK_RE.exec(agentMessage)?.[1];
   if (!block) return null;
   const raw = block.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
@@ -79,6 +147,22 @@ export function parseClassification(agentMessage: string): DocsClassification | 
     typeof obj.target === 'string' ? obj.target.trim().toUpperCase() : undefined;
   if (kind === 'update' && (!target || !ARTICLE_ID_RE.test(target))) return null;
 
+  // Resolve the docs home the deliverable belongs to. An update always derives
+  // it from the target id's prefix — including for a single-home product, where
+  // a foreign prefix means the agent picked an article from another product and
+  // the whole decision is unusable. Anything else uses the one home when there
+  // is one, and otherwise must be named explicitly.
+  let home: DocsHome | undefined;
+  if (kind === 'update') {
+    home = homeOfId(target!, homes);
+  } else if (homes.length === 1) {
+    home = homes[0];
+  } else {
+    const named = typeof obj.home === 'string' ? obj.home : '';
+    home = named ? homeNamed(named, homes) : undefined;
+  }
+  if (!home) return null;
+
   const candidates: ClassificationCandidate[] = [];
   if (Array.isArray(obj.candidates)) {
     for (const entry of obj.candidates) {
@@ -87,9 +171,14 @@ export function parseClassification(agentMessage: string): DocsClassification | 
       if (typeof c.id !== 'string') continue;
       const id = c.id.trim().toUpperCase();
       if (!ARTICLE_ID_RE.test(id)) continue;
+      // A candidate whose prefix belongs to no home of this product is another
+      // product's article — the id would mint or cross-link out of scope.
+      const candidateHome = homeOfId(id, homes);
+      if (!candidateHome) continue;
       candidates.push({
         id,
         file: typeof c.file === 'string' ? c.file : '',
+        docsFolder: candidateHome.docsFolder,
         reason: typeof c.reason === 'string' ? c.reason : '',
       });
     }
@@ -97,6 +186,8 @@ export function parseClassification(agentMessage: string): DocsClassification | 
 
   return {
     kind,
+    docsFolder: home.docsFolder,
+    idPrefix: home.prefix,
     ...(kind === 'update'
       ? {
           target,
@@ -118,13 +209,39 @@ export function buildClassifierSystemPrompt(
   context: ClassifierContext,
 ): string {
   const basePrompt = readFileSync(promptPath, 'utf-8');
-  return [
-    basePrompt,
+  return [basePrompt, buildRunScope(context)].join('\n\n');
+}
+
+/**
+ * The per-run product scope. A single-home product gets exactly the wording it
+ * got before multi-home products existed — the nine of them must see no prompt
+ * change. A product with several homes is additionally asked to pick one.
+ */
+function buildRunScope(context: ClassifierContext): string {
+  const homes = context.homes;
+  if (homes.length === 1) {
+    const home = homes[0]!;
+    return (
+      `## Run scope\n\n` +
+      `- This work item belongs to the product **${context.productName}** (article-id prefix \`${home.prefix}\`).\n` +
+      `- The published docs set for ${context.productName} is at \`${home.path}\` — this is the product's own folder and it is READ-ONLY. Search ONLY inside this folder; never scan other products' folders.\n` +
+      `- Article ids in \`target\` and \`candidates\` must use the \`${home.prefix}-###\` form and must exist in that folder.`
+    );
+  }
+
+  const list = homes
+    .map((h) => `  - \`${h.path}\` — article-id prefix \`${h.prefix}\``)
+    .join('\n');
+  const folderNames = homes.map((h) => `\`${h.docsFolder}\``).join(' / ');
+  const prefixForms = homes.map((h) => `\`${h.prefix}-###\``).join(' or ');
+  return (
     `## Run scope\n\n` +
-      `- This work item belongs to the product **${context.productName}** (article-id prefix \`${context.idPrefix}\`).\n` +
-      `- The published docs set for ${context.productName} is at \`${context.docsRepoPath}\` — this is the product's own folder and it is READ-ONLY. Search ONLY inside this folder; never scan other products' folders.\n` +
-      `- Article ids in \`target\` and \`candidates\` must use the \`${context.idPrefix}-###\` form and must exist in that folder.`,
-  ].join('\n\n');
+    `- This work item belongs to the product **${context.productName}**. Its documentation does not have a folder of its own — it lives in ${homes.length} folders of the docs set, so you must also decide WHICH of them the deliverable belongs to.\n` +
+    `- Candidate docs homes, in tie-break order (they are READ-ONLY). Search ONLY inside these folders; never scan other products' folders:\n${list}\n` +
+    `- Pick the home whose captions and subject match the changed AL code (for example, the receiving/capture side versus the sending/output side). The order above is a tie-break hint only, not a default.\n` +
+    `- Article ids in \`target\` and \`candidates\` must use the prefix of the folder the article lives in (${prefixForms}) and must exist in that folder. An id with any other prefix belongs to a different product — never use one.\n` +
+    `- When \`kind\` is \`newfeature\` or \`changelog\`, you MUST add a \`"home"\` field to the block naming the chosen folder exactly as spelled here: ${folderNames}. When \`kind\` is \`update\`, the home follows from the target id's prefix and \`"home"\` is not needed.`
+  );
 }
 
 /** The classification request: the work item context, mirroring buildUserPrompt in generator.ts. */
@@ -284,11 +401,20 @@ export async function classifyDocsChange(
   // result text with the end marker but not the opening one — when the final
   // text alone does not parse, retry against the run's full assistant text.
   const classification =
-    parseClassification(finalText) ?? parseClassification(assistantTexts.join('\n'));
+    parseClassification(finalText, context.homes) ??
+    parseClassification(assistantTexts.join('\n'), context.homes);
   if (!classification) {
     const tail = finalText.trim().slice(-1500);
+    // The block may well be present and valid JSON and still not parse — a
+    // multi-home run whose `home` names no folder of this product, or a target
+    // id from another product, both fail closed here. Say so, or the operator
+    // hunts for a missing block that is right there in the tail below.
+    const homeHint =
+      context.homes.length > 1
+        ? ` The block must also name one of this product's docs homes (${context.homes.map((h) => h.docsFolder).join(', ')}) — in \`home\` for a newfeature/changelog, or through the \`target\` id's prefix for an update.`
+        : '';
     throw new Error(
-      `Classifier returned no parseable <<<CLASSIFICATION>>> block (subtype=${resultSubtype ?? 'none'}, checked the final message and the full run text). Final message tail:\n${tail}`,
+      `Classifier returned no usable <<<CLASSIFICATION>>> block — absent, malformed, or its docs home could not be resolved (subtype=${resultSubtype ?? 'none'}, checked the final message and the full run text).${homeHint} Final message tail:\n${tail}`,
     );
   }
   return classification;

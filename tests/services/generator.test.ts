@@ -23,7 +23,7 @@ function ctx(overrides: Partial<DocsContext> = {}): DocsContext {
     docsRepoPath: 'C:/repos/continia.docs.articles/en-us/Continia Banking',
     productName: 'Continia Banking',
     idPrefix: 'CB',
-    classification: { kind: 'newfeature' as const, candidates: [], reasoning: '' },
+    classification: { kind: 'newfeature' as const, docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: '' },
     ...overrides,
   };
 }
@@ -260,12 +260,15 @@ describe('buildSystemPrompt classification handoff', () => {
       ctx({
         classification: {
           kind: 'update',
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
           target: 'CB-33',
           targetFile: 'Reconciliation/Account identification methods.md',
           candidates: [
             {
               id: 'CB-161',
               file: 'Using Templates in Banking Import.md',
+              docsFolder: 'continia-banking',
               reason: 'documents templates',
             },
           ],
@@ -287,7 +290,7 @@ describe('buildSystemPrompt classification handoff', () => {
       promptPath,
       [],
       ctx({
-        classification: { kind: 'newfeature', candidates: [], reasoning: '' },
+        classification: { kind: 'newfeature', docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: '' },
       }),
     );
     expect(sys).toContain('already decided');
@@ -295,12 +298,110 @@ describe('buildSystemPrompt classification handoff', () => {
     expect(sys).toContain('next unused');
   });
 
+  // Article paths are stored relative to the docs home they live in. With one
+  // home that is unambiguous and must keep reading exactly as it did; with two
+  // (Continia Delivery Network) a path from the other home has to say so.
+  test('a candidate from the deliverable home renders as a bare relative path', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        classification: {
+          kind: 'newfeature',
+          docsFolder: 'continia-document-output',
+          idPrefix: 'DO',
+          candidates: [
+            {
+              id: 'DO-2',
+              file: 'business-functionality/continia-edocuments/sending.md',
+              docsFolder: 'continia-document-output',
+              reason: 'sending side',
+            },
+          ],
+          reasoning: '',
+        },
+      }),
+    );
+    expect(sys).toContain('`business-functionality/continia-edocuments/sending.md`');
+    expect(sys).not.toContain('continia-document-output/business-functionality');
+  });
+
+  test('a candidate from the product other docs home is qualified with its folder', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        classification: {
+          kind: 'newfeature',
+          docsFolder: 'continia-document-output',
+          idPrefix: 'DO',
+          candidates: [
+            {
+              id: 'DC-1',
+              file: 'business-functionality/continia-edocuments/receiving.md',
+              docsFolder: 'continia-document-capture',
+              reason: 'capture side',
+            },
+          ],
+          reasoning: '',
+        },
+      }),
+    );
+    expect(sys).toContain(
+      '`continia-document-capture/business-functionality/continia-edocuments/receiving.md`',
+    );
+  });
+
+  test("an update target file stays relative to the deliverable's own home", () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        classification: {
+          kind: 'update',
+          docsFolder: 'continia-document-capture',
+          idPrefix: 'DC',
+          target: 'DC-7',
+          targetFile: 'business-functionality/continia-edocuments/receiving.md',
+          candidates: [],
+          reasoning: '',
+        },
+      }),
+    );
+    expect(sys).toContain('`business-functionality/continia-edocuments/receiving.md`');
+    expect(sys).not.toContain('continia-document-capture/business-functionality');
+  });
+
+  test('a multi-home product is still scoped to the one home the classifier chose', () => {
+    const sys = buildSystemPrompt(
+      promptPath,
+      [],
+      ctx({
+        docsRepoPath: '/repos/continia.docs.articles/en-us/continia-document-output',
+        productName: 'Continia Delivery Network',
+        idPrefix: 'DO',
+        classification: {
+          kind: 'newfeature',
+          docsFolder: 'continia-document-output',
+          idPrefix: 'DO',
+          candidates: [],
+          reasoning: '',
+        },
+      }),
+    );
+    expect(sys).toContain('/repos/continia.docs.articles/en-us/continia-document-output');
+    expect(sys).toContain('DO-###');
+    expect(sys).toMatch(/ONLY inside this folder/i);
+    // The other home must not leak into the drafting scope.
+    expect(sys).not.toContain('continia-document-capture');
+  });
+
   test('renders a decided changelog', () => {
     const sys = buildSystemPrompt(
       promptPath,
       [],
       ctx({
-        classification: { kind: 'changelog', candidates: [], reasoning: '' },
+        classification: { kind: 'changelog', docsFolder: 'continia-banking', idPrefix: 'CB', candidates: [], reasoning: '' },
       }),
     );
     expect(sys).toContain('already decided');
