@@ -185,6 +185,82 @@ describe('makeCanUseTool', () => {
     expect((await gate('Read', { file_path: 'anything' })).behavior).toBe('allow');
     expect((await gate('Grep', {})).behavior).toBe('allow');
   });
+
+  // Discarding stderr and duplicating a file descriptor create no file. Blocking
+  // them cost the agent turns on every exploratory command it tried to quieten.
+  test('allows redirects that write no file', async () => {
+    const safe = [
+      'find /repos -maxdepth 2 -iname "*migration*" 2>/dev/null',
+      'git fetch --all --quiet 2>&1 | tail -20',
+      'rg "Handled" src/ 2>/dev/null',
+      'ls -l >/dev/null',
+      'grep -r foo . 2>&1 | head',
+      'some-cmd &>/dev/null',
+      'echo hi >&2',
+    ];
+    for (const command of safe) {
+      expect(
+        [(await gate('Bash', { command })).behavior, command],
+      ).toEqual(['allow', command]);
+    }
+  });
+
+  // ...but a redirect that does create or truncate a file is still the way a
+  // shell could write into the source repo, so it stays blocked.
+  test('still blocks redirects that create a file', async () => {
+    const unsafe = [
+      'echo hello > /repos/al/note.md',
+      'cat a.md >> b.md',
+      'grep foo src/ 2>errors.log',
+      'awk "{print}" x > y',
+    ];
+    for (const command of unsafe) {
+      expect(
+        [(await gate('Bash', { command })).behavior, command],
+      ).toEqual(['deny', command]);
+    }
+  });
+
+  // mkdir creates no content, and every path that could write content — Write,
+  // Edit, a file redirect — is fenced independently.
+  test('allows mkdir', async () => {
+    expect((await gate('Bash', { command: 'mkdir -p /app/.output' })).behavior).toBe('allow');
+  });
+
+  // The bare-command patterns matched their word anywhere in the line, so any
+  // command that merely mentioned one was denied.
+  test('matches bare destructive commands only at command position', async () => {
+    const safe = [
+      'grep -rn "del" src/',
+      'rg "mv" src/',
+      'grep -c "cp" README.md',
+      'ls | grep tee',
+      'rg rmdir src/',
+    ];
+    for (const command of safe) {
+      expect(
+        [(await gate('Bash', { command })).behavior, command],
+      ).toEqual(['allow', command]);
+    }
+  });
+
+  test('still blocks those commands when they are the command', async () => {
+    const unsafe = [
+      'rmdir /repos/al/src',
+      'mv a.md b.md',
+      'cp a.md b.md',
+      'cat x | tee out.md',
+      'ls; del file.md',
+      'rm -rf /repos/al',
+      'chmod 777 /repos/al',
+      'sed -i "s/a/b/" file.md',
+    ];
+    for (const command of unsafe) {
+      expect(
+        [(await gate('Bash', { command })).behavior, command],
+      ).toEqual(['deny', command]);
+    }
+  });
 });
 
 describe('makeCanUseTool denial logging', () => {

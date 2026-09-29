@@ -7,25 +7,45 @@ import type { DiscoveredSkill } from './skill-loader.ts';
 import type { DocsClassification } from './classifier.ts';
 import { renderArticlePath } from './classifier.ts';
 
+/**
+ * Start of a command: the beginning of the line, or just after a `;`, `&&`,
+ * `||`, `|` or `(`. Bare command names are anchored to this — matched anywhere
+ * on the line, a word like `del` or `mv` denies any command that merely
+ * mentions it (`grep -rn "del" src/`), which costs the agent turns without
+ * protecting anything.
+ */
+const CMD = String.raw`(?:^|[;&|(]\s*)`;
+
 const DENIED_BASH_PATTERNS = [
   /\bgit\s+(push|commit|merge|rebase|reset|checkout|branch\s+-[dD]|stash\s+drop|clean|tag\s+-d)/,
   /\brm\s+(-rf?|--recursive)/,
-  /\brmdir\b/,
-  /\bdel\b/,
-  /\bmkdir\b/,
-  /\bmv\b/,
-  /\bcp\b/,
-  /\b(chmod|chown)\b/,
+  new RegExp(`${CMD}rmdir\\b`),
+  new RegExp(`${CMD}del\\s`),
+  new RegExp(`${CMD}mv\\s`),
+  new RegExp(`${CMD}cp\\s`),
+  new RegExp(`${CMD}(chmod|chown)\\s`),
   /\bnpm\s+(publish|install|uninstall)/,
   /\bbun\s+(add|remove|install|publish)/,
   /\bcurl\s.*(-X\s*(POST|PUT|PATCH|DELETE)|--data|--request\s*(POST|PUT|PATCH|DELETE))/,
   /\baz\s+devops/,
   /\bgh\s+(pr|issue)\s+(create|close|merge|delete|comment)/,
-  />\s*[^\s]/, // redirect output to file
-  /\btee\b/,
+  />\s*[^\s]/, // redirect output to file (tested after stripping the non-writing forms)
+  new RegExp(`${CMD}tee\\s`),
   /\bsed\s+-i/,
-  /\bawk\b.*>/, // awk with output redirect
 ];
+
+/**
+ * Strip the redirects that create no file — discarding to `/dev/null` and file
+ * descriptor duplication (`2>&1`, `>&2`) — so the file-redirect rule only sees
+ * redirects that would actually write something. `2>/dev/null` is idiomatic in
+ * almost every exploratory command; denying it taught the agent nothing and
+ * burned a turn each time.
+ */
+function stripNonWritingRedirects(command: string): string {
+  return command
+    .replace(/(?:\d+|&)?>>?\s*\/dev\/null/g, ' ')
+    .replace(/(?:\d+)?>&\s*\d+/g, ' ');
+}
 
 /** True if `child` resolves to a path inside `parent`. */
 function isUnderDir(child: string, parent: string, cwd: string): boolean {
@@ -64,12 +84,17 @@ export function makeCanUseTool(
   ): Promise<PermissionResult> {
     if (toolName === 'Bash') {
       const command = String(input.command ?? '');
+      const probe = stripNonWritingRedirects(command);
       for (const pattern of DENIED_BASH_PATTERNS) {
-        if (pattern.test(command)) {
+        if (pattern.test(probe)) {
           log(`  Gate denied Bash (destructive): ${command}`);
           return {
             behavior: 'deny',
-            message: `Blocked destructive bash command: ${command}`,
+            message:
+              `Blocked destructive bash command: ${command}. ` +
+              `Bash is read-only here: inspect with find/grep/git log/git diff, and write the ` +
+              `deliverable with the Write tool under ${outputDir}. Redirecting to /dev/null ` +
+              `(\`2>/dev/null\`) and \`2>&1\` are allowed; redirecting into a file is not.`,
           };
         }
       }
