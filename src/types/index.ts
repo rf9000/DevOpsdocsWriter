@@ -89,6 +89,16 @@ export interface ProcessedState {
   lastRunAt: string;
   dailyDocsCount: number;
   dailyCountDate: string;
+  /** Consecutive-failure records by work item id, used to back off retries. */
+  failedItems: Record<string, FailureRecord>;
+}
+
+/** Consecutive processing failures of one work item; cleared on success. */
+export interface FailureRecord {
+  count: number;
+  lastError: string;
+  /** ISO timestamp of the most recent failure. */
+  lastFailedAt: string;
 }
 
 /** Result summary after processing a single item. */

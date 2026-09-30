@@ -30,6 +30,7 @@ docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-ge
 - **Directory junctions** for skills (no admin needed on Windows), created/removed per run
 - **JSON state store** with Set-based O(1) lookups + a daily generation cap
 - **Polling watcher** with graceful SIGINT/SIGTERM shutdown; tag removal prevents reprocessing
+- **Failure backoff** — after 3 consecutive failures an item is skipped (logged with its last error) for 1h, then 4h, then 24h; success or removing the tag resets it. Product-resolution failures are not counted
 
 ## Commands
 

@@ -61,4 +61,56 @@ describe('StateStore', () => {
     const reloaded = new StateStore(dir);
     expect(reloaded.processedCount).toBe(0);
   });
+  describe('failure records', () => {
+    const t1 = new Date('2026-09-30T10:00:00Z');
+    const t2 = new Date('2026-09-30T10:05:00Z');
+
+    test('recordFailure counts consecutive failures and keeps the latest error', () => {
+      const store = new StateStore(dir);
+      expect(store.getFailure(7)).toBeUndefined();
+      store.recordFailure(7, 'first', t1);
+      const rec = store.recordFailure(7, 'second', t2);
+      expect(rec).toEqual({ count: 2, lastError: 'second', lastFailedAt: t2.toISOString() });
+      expect(store.getFailure(7)).toEqual(rec);
+    });
+
+    test('clearFailure forgets the item', () => {
+      const store = new StateStore(dir);
+      store.recordFailure(7, 'x', t1);
+      store.clearFailure(7);
+      expect(store.getFailure(7)).toBeUndefined();
+    });
+
+    test('failure records persist across reloads', () => {
+      const store = new StateStore(dir);
+      store.recordFailure(7, 'EACCES', t1);
+      store.save();
+      expect(new StateStore(dir).getFailure(7)).toEqual({
+        count: 1,
+        lastError: 'EACCES',
+        lastFailedAt: t1.toISOString(),
+      });
+    });
+
+    test('pruneFailures drops records for items not in the keep list', () => {
+      const store = new StateStore(dir);
+      store.recordFailure(7, 'x', t1);
+      store.recordFailure(8, 'y', t1);
+      store.pruneFailures([8]);
+      expect(store.getFailure(7)).toBeUndefined();
+      expect(store.getFailure(8)).toBeDefined();
+    });
+
+    test('a state file written before failure tracking loads with no records', () => {
+      require('fs').writeFileSync(
+        join(dir, 'processed-items.json'),
+        JSON.stringify({ processedItemIds: [1], lastRunAt: '', dailyDocsCount: 0, dailyCountDate: '' }),
+      );
+      const store = new StateStore(dir);
+      expect(store.isProcessed(1)).toBe(true);
+      expect(store.getFailure(1)).toBeUndefined();
+      store.recordFailure(1, 'x', t1);
+      expect(store.getFailure(1)?.count).toBe(1);
+    });
+  });
 });

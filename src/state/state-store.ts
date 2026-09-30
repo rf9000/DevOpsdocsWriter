@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { dirname, join } from 'path';
-import type { ProcessedState } from '../types/index.ts';
+import type { FailureRecord, ProcessedState } from '../types/index.ts';
 
 function todayISO(): string {
   return new Date().toISOString().slice(0, 10);
@@ -38,6 +38,7 @@ export class StateStore {
             lastRunAt: p.lastRunAt ?? '',
             dailyDocsCount: p.dailyDocsCount ?? 0,
             dailyCountDate: p.dailyCountDate ?? '',
+            failedItems: p.failedItems ?? {},
           };
         }
       }
@@ -50,6 +51,7 @@ export class StateStore {
       lastRunAt: '',
       dailyDocsCount: 0,
       dailyCountDate: '',
+      failedItems: {},
     };
   }
 
@@ -82,6 +84,34 @@ export class StateStore {
     }
   }
 
+  /** The item's consecutive-failure record, if it has failed since its last success. */
+  getFailure(itemId: number): FailureRecord | undefined {
+    return this.state.failedItems[itemId];
+  }
+
+  /** Count one more consecutive failure for the item and return the updated record. */
+  recordFailure(itemId: number, error: string, at: Date): FailureRecord {
+    const record: FailureRecord = {
+      count: (this.state.failedItems[itemId]?.count ?? 0) + 1,
+      lastError: error,
+      lastFailedAt: at.toISOString(),
+    };
+    this.state.failedItems[itemId] = record;
+    return record;
+  }
+
+  clearFailure(itemId: number): void {
+    delete this.state.failedItems[itemId];
+  }
+
+  /** Drop failure records for items outside `keepIds` (e.g. no longer tagged). */
+  pruneFailures(keepIds: number[]): void {
+    const keep = new Set(keepIds.map(String));
+    for (const id of Object.keys(this.state.failedItems)) {
+      if (!keep.has(id)) delete this.state.failedItems[id];
+    }
+  }
+
   canGenerateToday(max: number): boolean {
     const today = todayISO();
     if (this.state.dailyCountDate !== today) {
@@ -111,6 +141,7 @@ export class StateStore {
       lastRunAt: '',
       dailyDocsCount: 0,
       dailyCountDate: '',
+      failedItems: {},
     };
     this.processedSet = new Set();
     this.productCommentedSet = new Set();

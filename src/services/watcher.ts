@@ -1,4 +1,4 @@
-import type { AppConfig, DocsProcessResult } from '../types/index.ts';
+import type { AppConfig, DocsProcessResult, FailureRecord } from '../types/index.ts';
 import { StateStore } from '../state/state-store.ts';
 import * as sdk from '../sdk/azure-devops-client.ts';
 import * as proc from './processor.ts';
@@ -21,6 +21,8 @@ export interface WatcherDeps {
     workItemId: number,
     html: string,
   ) => Promise<unknown>;
+  /** Clock for the failure backoff; injectable for tests. */
+  now?: () => Date;
 }
 
 const defaultDeps: WatcherDeps = {
@@ -30,6 +32,29 @@ const defaultDeps: WatcherDeps = {
   addTagToWorkItem: sdk.addTagToWorkItem,
   addWorkItemComment: sdk.addWorkItemComment,
 };
+
+/** Consecutive failures an item may have before its retries are paused. */
+const FAILURES_BEFORE_PAUSE = 3;
+const HOUR_MS = 60 * 60 * 1000;
+
+/**
+ * When a failing item may be retried, or null to retry on the next poll.
+ *
+ * Every attempt can spend real money (the classifier agent runs before most
+ * failure points), so a persistent failure — a broken mount, a permission
+ * error — must not be retried every poll. After the third failure in a row the
+ * item pauses for 1h, then 4h, then 24h per further failure. That still
+ * recovers on its own once the cause is fixed.
+ */
+export function retryAfter(record: FailureRecord): Date | null {
+  if (record.count < FAILURES_BEFORE_PAUSE) return null;
+  const hours = record.count === 3 ? 1 : record.count === 4 ? 4 : 24;
+  return new Date(Date.parse(record.lastFailedAt) + hours * HOUR_MS);
+}
+
+function formatTime(d: Date): string {
+  return d.toISOString().replace('T', ' ').slice(0, 16);
+}
 
 function log(message: string): void {
   const ts = new Date().toISOString().replace('T', ' ').slice(0, 19);
@@ -45,20 +70,45 @@ export async function runPollCycle(
   const itemIds = await deps.queryTaggedWorkItems(config, config.writeDocsTag);
   log(`Found ${itemIds.length} tagged work item(s)`);
 
+  const now = deps.now ?? (() => new Date());
+
+  // An item that lost its tag starts from a clean slate if it is re-tagged —
+  // removing and re-adding the tag is the manual "retry now".
+  stateStore.pruneFailures(itemIds);
+
   let documented = 0;
   let skipped = 0;
   let errors = 0;
 
-  for (const itemId of itemIds) {
+  const recordFailure = (itemId: number, error: string) => {
+    const record = stateStore.recordFailure(itemId, error, now());
+    const until = retryAfter(record);
+    if (until && record.count === FAILURES_BEFORE_PAUSE) {
+      log(`#${itemId}: Failed ${record.count} times in a row — pausing retries until ${formatTime(until)}`);
+    }
+  };
+
+  for (const [index, itemId] of itemIds.entries()) {
     if (!stateStore.canGenerateToday(config.maxDocsPerDay)) {
       log(`Daily limit reached (${config.maxDocsPerDay}). Skipping remaining items.`);
-      skipped += itemIds.length - (documented + errors);
+      skipped += itemIds.length - index;
       break;
+    }
+
+    const failure = stateStore.getFailure(itemId);
+    const until = failure && retryAfter(failure);
+    if (failure && until && now() < until) {
+      log(
+        `#${itemId}: Skipped — failed ${failure.count} time(s), next retry after ${formatTime(until)} — last error: ${failure.lastError}`,
+      );
+      skipped++;
+      continue;
     }
 
     try {
       const result = await deps.processDocsItem(config, itemId);
       if (result.documented) {
+        stateStore.clearFailure(itemId);
         stateStore.markProcessed(itemId);
         stateStore.incrementDailyCount();
         documented++;
@@ -85,6 +135,11 @@ export async function runPollCycle(
         log(`#${itemId}: Documentation failed — ${result.error ?? 'unknown reason'}`);
         errors++;
 
+        // Product-resolution failures happen before any agent runs, so they
+        // cost nothing; they keep retrying every poll so a fixed work item is
+        // picked up at once.
+        if (!result.productIssue) recordFailure(itemId, result.error ?? 'unknown reason');
+
         // Product could not be resolved: tell the work item why, exactly once.
         // The write-docs tag stays on, so fixing the work item (or .env)
         // auto-retries it on a later poll without re-tagging.
@@ -109,6 +164,7 @@ export async function runPollCycle(
     } catch (err) {
       log(`#${itemId}: Fatal error — ${err}`);
       errors++;
+      recordFailure(itemId, String(err));
     }
   }
 
