@@ -621,7 +621,7 @@ export async function processDocsItem(
       log(`  #${itemId}: [DRY RUN] Output   → ${deliverablePath}`);
       log(`  #${itemId}: [DRY RUN] Summary  → ${summaryPath}`);
       log(`  #${itemId}: [DRY RUN] Skipping ADO writes`);
-      return { itemId, documented: true, articlePath: deliverablePath, summaryPath };
+      return { itemId, documented: true, articlePath: deliverablePath, summaryPath, productName: product.name };
     }
 
     // Attach the deliverable, then comment.
@@ -644,7 +644,7 @@ export async function processDocsItem(
     await deps.addWorkItemComment(config, itemId, comment);
     log(`  #${itemId}: Posted confirmation comment`);
 
-    return { itemId, documented: true, articlePath: deliverablePath };
+    return { itemId, documented: true, articlePath: deliverablePath, productName: product.name };
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
     log(`  #${itemId}: Error — ${errorMsg}`);

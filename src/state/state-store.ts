@@ -35,6 +35,7 @@ export class StateStore {
           return {
             processedItemIds: p.processedItemIds ?? [],
             processedAt: p.processedAt ?? {},
+            processedProduct: p.processedProduct ?? {},
             productCommentedItemIds: p.productCommentedItemIds ?? [],
             lastRunAt: p.lastRunAt ?? '',
             dailyDocsCount: p.dailyDocsCount ?? 0,
@@ -49,6 +50,7 @@ export class StateStore {
     return {
       processedItemIds: [],
       processedAt: {},
+      processedProduct: {},
       productCommentedItemIds: [],
       lastRunAt: '',
       dailyDocsCount: 0,
@@ -67,13 +69,14 @@ export class StateStore {
     return this.processedSet.has(itemId);
   }
 
-  /** Record a drafted article; a re-tagged item drafted again keeps the latest time. */
-  markProcessed(itemId: number, at: Date = new Date()): void {
+  /** Record a drafted article; a re-tagged item drafted again keeps the latest time and product. */
+  markProcessed(itemId: number, at: Date = new Date(), productName?: string): void {
     if (!this.processedSet.has(itemId)) {
       this.processedSet.add(itemId);
       this.state.processedItemIds.push(itemId);
     }
     this.state.processedAt[itemId] = at.toISOString();
+    if (productName) this.state.processedProduct[itemId] = productName;
   }
 
   /** Whether the "could not resolve product" comment was already posted for this item. */
@@ -142,6 +145,7 @@ export class StateStore {
     this.state = {
       processedItemIds: [],
       processedAt: {},
+      processedProduct: {},
       productCommentedItemIds: [],
       lastRunAt: '',
       dailyDocsCount: 0,

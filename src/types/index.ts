@@ -86,6 +86,8 @@ export interface ProcessedState {
   processedItemIds: number[];
   /** When each item last got a drafted article (ISO), by work item id. Read by the monitor dashboard. */
   processedAt: Record<string, string>;
+  /** Product (solution) of each drafted item, by work item id. Read by the monitor dashboard. */
+  processedProduct: Record<string, string>;
   /** Items already given a "could not resolve product" comment, so it is posted only once. */
   productCommentedItemIds: number[];
   lastRunAt: string;
@@ -109,6 +111,8 @@ export interface DocsProcessResult {
   documented: boolean;
   /** Path to the generated article file (when documented). */
   articlePath?: string;
+  /** Product (solution) the work item resolved to, e.g. "Continia Banking" (when documented). */
+  productName?: string;
   /** Path to the agent summary file (written on dry runs instead of logging it). */
   summaryPath?: string;
   error?: string;
