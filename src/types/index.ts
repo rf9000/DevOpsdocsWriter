@@ -84,6 +84,8 @@ export interface PrContext {
 /** Persisted state tracking which items have already been documented + daily cap. */
 export interface ProcessedState {
   processedItemIds: number[];
+  /** When each item last got a drafted article (ISO), by work item id. Read by the monitor dashboard. */
+  processedAt: Record<string, string>;
   /** Items already given a "could not resolve product" comment, so it is posted only once. */
   productCommentedItemIds: number[];
   lastRunAt: string;

@@ -27,6 +27,17 @@ describe('StateStore', () => {
     expect(reloaded.processedCount).toBe(2);
   });
 
+  test('records when each item was drafted, keeping the latest time', () => {
+    const store = new StateStore(dir);
+    store.markProcessed(1, new Date('2026-10-01T08:00:00Z'));
+    store.markProcessed(1, new Date('2026-10-03T09:00:00Z'));
+    store.save();
+
+    const raw = JSON.parse(require('fs').readFileSync(join(dir, 'processed-items.json'), 'utf-8'));
+    expect(raw.processedAt).toEqual({ '1': '2026-10-03T09:00:00.000Z' });
+    expect(raw.processedItemIds).toEqual([1]);
+  });
+
   test('dedupes markProcessed', () => {
     const store = new StateStore(dir);
     store.markProcessed(1);

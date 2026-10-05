@@ -34,6 +34,7 @@ export class StateStore {
           const p = parsed as Partial<ProcessedState>;
           return {
             processedItemIds: p.processedItemIds ?? [],
+            processedAt: p.processedAt ?? {},
             productCommentedItemIds: p.productCommentedItemIds ?? [],
             lastRunAt: p.lastRunAt ?? '',
             dailyDocsCount: p.dailyDocsCount ?? 0,
@@ -47,6 +48,7 @@ export class StateStore {
     }
     return {
       processedItemIds: [],
+      processedAt: {},
       productCommentedItemIds: [],
       lastRunAt: '',
       dailyDocsCount: 0,
@@ -65,11 +67,13 @@ export class StateStore {
     return this.processedSet.has(itemId);
   }
 
-  markProcessed(itemId: number): void {
+  /** Record a drafted article; a re-tagged item drafted again keeps the latest time. */
+  markProcessed(itemId: number, at: Date = new Date()): void {
     if (!this.processedSet.has(itemId)) {
       this.processedSet.add(itemId);
       this.state.processedItemIds.push(itemId);
     }
+    this.state.processedAt[itemId] = at.toISOString();
   }
 
   /** Whether the "could not resolve product" comment was already posted for this item. */
@@ -137,6 +141,7 @@ export class StateStore {
   reset(): void {
     this.state = {
       processedItemIds: [],
+      processedAt: {},
       productCommentedItemIds: [],
       lastRunAt: '',
       dailyDocsCount: 0,

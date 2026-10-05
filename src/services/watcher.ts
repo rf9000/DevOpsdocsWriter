@@ -109,7 +109,7 @@ export async function runPollCycle(
       const result = await deps.processDocsItem(config, itemId);
       if (result.documented) {
         stateStore.clearFailure(itemId);
-        stateStore.markProcessed(itemId);
+        stateStore.markProcessed(itemId, now());
         stateStore.incrementDailyCount();
         documented++;
 
