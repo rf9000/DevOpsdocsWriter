@@ -31,8 +31,16 @@ export interface ProcessorDeps {
   discoverSkills: (skillsRoot: string) => DiscoveredSkill[];
   createSkillJunctions: (targetRepoPath: string, skillsSourceDir: string) => string[];
   removeSkillJunctions: (created: string[]) => void;
-  generateDocs: (config: AppConfig, context: DocsContext) => Promise<string>;
-  classifyDocs: (config: AppConfig, context: ClassifierContext) => Promise<DocsClassification>;
+  generateDocs: (
+    config: AppConfig,
+    context: DocsContext,
+    onCost?: (usd: number) => void,
+  ) => Promise<string>;
+  classifyDocs: (
+    config: AppConfig,
+    context: ClassifierContext,
+    onCost?: (usd: number) => void,
+  ) => Promise<DocsClassification>;
   uploadAttachment: (
     config: AppConfig,
     fileName: string,
@@ -453,12 +461,44 @@ export async function classifyItem(
   return { classification };
 }
 
+/** What one run spent, and the title and product the ledger line carries. */
+interface RunTally {
+  costUsd: number;
+  title?: string;
+  product?: string;
+}
+
+/**
+ * Process one tagged work item. Every result carries the run's agent spend and
+ * the item's title and product (once known), so the watcher can write the
+ * ledger line for a failed run too.
+ */
 export async function processDocsItem(
   config: AppConfig,
   itemId: number,
   deps: ProcessorDeps = defaultDeps,
 ): Promise<DocsProcessResult> {
+  const run: RunTally = { costUsd: 0 };
+  const result = await runDocsItem(config, itemId, deps, run);
+  const productName = result.productName ?? run.product;
+  return {
+    ...result,
+    costUsd: Math.round(run.costUsd * 10_000) / 10_000,
+    ...(run.title ? { title: run.title } : {}),
+    ...(productName ? { productName } : {}),
+  };
+}
+
+async function runDocsItem(
+  config: AppConfig,
+  itemId: number,
+  deps: ProcessorDeps,
+  run: RunTally,
+): Promise<DocsProcessResult> {
   log(`Processing work item #${itemId}...`);
+  const onCost = (usd: number) => {
+    run.costUsd += usd;
+  };
 
   try {
     const gathered = await gatherItemContext(config, itemId, deps);
@@ -472,6 +512,8 @@ export async function processDocsItem(
       };
     }
     const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath } = gathered;
+    run.title = itemTitle;
+    run.product = product.name;
     const effectiveConfig: AppConfig = { ...config, targetRepoPath };
 
     // Non-optional classifier phase: decide new-vs-update-vs-changelog BEFORE
@@ -487,7 +529,7 @@ export async function processDocsItem(
       pullRequests,
       homes: docsHomes,
       productName: product.name,
-    });
+    }, onCost);
     const home = chosenHome(docsHomes, classification);
     const mismatchedHome = targetFileHomeMismatch(classification, docsHomes);
     if (mismatchedHome) {
@@ -536,7 +578,7 @@ export async function processDocsItem(
     log(`  #${itemId}: Linked ${created.length} skill junction(s) into source repo`);
     try {
       log(`  #${itemId}: Generating documentation article...`);
-      summary = await deps.generateDocs(effectiveConfig, context);
+      summary = await deps.generateDocs(effectiveConfig, context, onCost);
     } finally {
       deps.removeSkillJunctions(created);
       log(`  #${itemId}: Removed skill junction(s)`);

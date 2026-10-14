@@ -1,5 +1,6 @@
-import type { AppConfig, DocsProcessResult, FailureRecord } from '../types/index.ts';
+import type { AppConfig, DocsProcessResult, FailureRecord, LedgerRecord } from '../types/index.ts';
 import { StateStore } from '../state/state-store.ts';
+import { appendCostRecord } from '../state/cost-ledger.ts';
 import * as sdk from '../sdk/azure-devops-client.ts';
 import * as proc from './processor.ts';
 
@@ -21,6 +22,8 @@ export interface WatcherDeps {
     workItemId: number,
     html: string,
   ) => Promise<unknown>;
+  /** Append one line to the cost ledger, the full processed history. */
+  recordLedger: (config: AppConfig, record: LedgerRecord) => void;
   /** Clock for the failure backoff; injectable for tests. */
   now?: () => Date;
 }
@@ -31,6 +34,7 @@ const defaultDeps: WatcherDeps = {
   removeTagFromWorkItem: sdk.removeTagFromWorkItem,
   addTagToWorkItem: sdk.addTagToWorkItem,
   addWorkItemComment: sdk.addWorkItemComment,
+  recordLedger: (config, record) => appendCostRecord(config.costLogPath, record),
 };
 
 /** Consecutive failures an item may have before its retries are paused. */
@@ -88,6 +92,30 @@ export async function runPollCycle(
     }
   };
 
+  // One ledger line per finished run. Best-effort: a ledger write must never
+  // fail the item. Dry runs write nothing, as with every other side effect.
+  const recordLedger = (
+    itemId: number,
+    outcome: LedgerRecord['outcome'],
+    result: DocsProcessResult | undefined,
+    detail: { reason?: string; error?: string } = {},
+  ) => {
+    if (config.dryRun) return;
+    try {
+      deps.recordLedger(config, {
+        at: now().toISOString(),
+        workItemId: itemId,
+        outcome,
+        costUsd: result?.costUsd ?? 0,
+        ...(result?.title ? { title: result.title } : {}),
+        ...(result?.productName ? { product: result.productName } : {}),
+        ...detail,
+      });
+    } catch (err) {
+      log(`#${itemId}: Warning — failed to write the cost ledger: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   for (const [index, itemId] of itemIds.entries()) {
     if (!stateStore.canGenerateToday(config.maxDocsPerDay)) {
       log(`Daily limit reached (${config.maxDocsPerDay}). Skipping remaining items.`);
@@ -111,6 +139,7 @@ export async function runPollCycle(
         stateStore.clearFailure(itemId);
         stateStore.markProcessed(itemId, now(), result.productName);
         stateStore.incrementDailyCount();
+        recordLedger(itemId, 'completed', result);
         documented++;
 
         // Remove the tag so the item is not picked up again (skipped in dry-run).
@@ -138,7 +167,10 @@ export async function runPollCycle(
         // Product-resolution failures happen before any agent runs, so they
         // cost nothing; they keep retrying every poll so a fixed work item is
         // picked up at once.
-        if (!result.productIssue) recordFailure(itemId, result.error ?? 'unknown reason');
+        if (!result.productIssue) {
+          recordFailure(itemId, result.error ?? 'unknown reason');
+          recordLedger(itemId, 'failed', result, { error: result.error ?? 'unknown reason' });
+        }
 
         // Product could not be resolved: tell the work item why, exactly once.
         // The write-docs tag stays on, so fixing the work item (or .env)
@@ -152,6 +184,8 @@ export async function runPollCycle(
                 `⚠️ <b>docsWriter could not process this item.</b><br/>${escapeHtml(result.productIssue)}`,
               );
               stateStore.markProductCommented(itemId);
+              // Logged once, with the comment: the item retries every poll.
+              recordLedger(itemId, 'skipped', result, { reason: result.productIssue });
               log(`#${itemId}: Posted product-resolution comment (once)`);
             } catch (commentErr) {
               log(`#${itemId}: Warning — failed to post product-resolution comment: ${commentErr}`);
@@ -165,6 +199,7 @@ export async function runPollCycle(
       log(`#${itemId}: Fatal error — ${err}`);
       errors++;
       recordFailure(itemId, String(err));
+      recordLedger(itemId, 'failed', undefined, { error: String(err) });
     }
   }
 

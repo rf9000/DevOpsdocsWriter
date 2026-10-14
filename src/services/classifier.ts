@@ -314,11 +314,13 @@ function extractAssistantText(message: { message: { content: unknown[] } }): str
  * cwd = the product's AL source repo. Returns the parsed decision; throws when
  * the agent errors or its final message has no parseable
  * `<<<CLASSIFICATION>>>` block, so the caller fails closed and the item is
- * retried on a later poll instead of drafting with a guessed kind.
+ * retried on a later poll instead of drafting with a guessed kind. `onCost`
+ * receives the run's USD as soon as the SDK reports it, also when it then fails.
  */
 export async function classifyDocsChange(
   config: AppConfig,
   context: ClassifierContext,
+  onCost?: (usd: number) => void,
 ): Promise<DocsClassification> {
   const systemPrompt = buildClassifierSystemPrompt(classifierPromptPath(config), context);
 
@@ -359,6 +361,7 @@ export async function classifyDocsChange(
         console.log(
           `  Classifier cost: $${message.total_cost_usd.toFixed(4)} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${message.num_turns} turns`,
         );
+        onCost?.(message.total_cost_usd);
         resultSubtype = message.subtype;
         if (message.subtype === 'success') {
           // The CLI reports subtype 'success' with is_error set when the turn

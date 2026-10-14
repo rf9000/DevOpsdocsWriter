@@ -1,3 +1,4 @@
+import { join } from "path";
 import { z } from "zod";
 import type { AppConfig } from "../types/index.ts";
 
@@ -19,6 +20,7 @@ const envSchema = z.object({
   MAX_TURNS: z.coerce.number().int().positive().default(60),
   PROMPT_PATH: z.string().default("src/prompts/write-docs.md"),
   STATE_DIR: z.string().default(".state"),
+  COST_LOG_PATH: z.string().optional(),
 });
 
 export function loadConfig(
@@ -73,6 +75,7 @@ export function loadConfig(
     maxTurns: parsed.MAX_TURNS,
     promptPath: parsed.PROMPT_PATH,
     stateDir: parsed.STATE_DIR,
+    costLogPath: parsed.COST_LOG_PATH ?? join(parsed.STATE_DIR, "cost-ledger.jsonl"),
     dryRun: false,
   };
 }

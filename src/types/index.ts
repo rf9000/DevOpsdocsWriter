@@ -36,6 +36,8 @@ export interface AppConfig {
   maxTurns: number;
   promptPath: string;
   stateDir: string;
+  /** JSONL ledger, one line per finished run (default: <STATE_DIR>/cost-ledger.jsonl). */
+  costLogPath: string;
   dryRun: boolean;
 }
 
@@ -111,7 +113,7 @@ export interface DocsProcessResult {
   documented: boolean;
   /** Path to the generated article file (when documented). */
   articlePath?: string;
-  /** Product (solution) the work item resolved to, e.g. "Continia Banking" (when documented). */
+  /** Product (solution) the work item resolved to, e.g. "Continia Banking" (once resolved). */
   productName?: string;
   /** Path to the agent summary file (written on dry runs instead of logging it). */
   summaryPath?: string;
@@ -122,6 +124,30 @@ export interface DocsProcessResult {
    * or missing docs folder). The watcher posts it as a one-time work-item comment.
    */
   productIssue?: string;
+  /** The work item's System.Title, when it was fetched before the run ended. */
+  title?: string;
+  /** USD the Agent SDK reported across the classifier and drafting runs. */
+  costUsd?: number;
+}
+
+/**
+ * One line of the cost ledger, the same format the sibling DevOps agents write,
+ * so the dashboard reads every agent's history with one parser.
+ */
+export interface LedgerRecord {
+  /** ISO timestamp of when the run finished. */
+  at: string;
+  workItemId: number;
+  outcome: 'completed' | 'failed' | 'skipped';
+  /** USD spent by this run; 0 when no agent ran. */
+  costUsd: number;
+  title?: string;
+  /** Product (solution) the work item resolved to. */
+  product?: string;
+  /** Why the item was skipped. */
+  reason?: string;
+  /** The error of a failed run. */
+  error?: string;
 }
 
 /** The three kinds of deliverable the pipeline can produce (see code-to-docs.md §6). */

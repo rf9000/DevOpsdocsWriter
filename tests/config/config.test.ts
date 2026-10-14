@@ -34,6 +34,15 @@ describe('loadConfig', () => {
     expect(cfg.dryRun).toBe(false);
   });
 
+  test('puts the cost ledger in the state dir unless COST_LOG_PATH is set', () => {
+    expect(loadConfig(baseEnv({ STATE_DIR: '/state' })).costLogPath.replace(/\\/g, '/')).toBe(
+      '/state/cost-ledger.jsonl',
+    );
+    expect(loadConfig(baseEnv({ COST_LOG_PATH: '/elsewhere/ledger.jsonl' })).costLogPath).toBe(
+      '/elsewhere/ledger.jsonl',
+    );
+  });
+
   test('coerces numeric env vars', () => {
     const cfg = loadConfig(
       baseEnv({ POLL_INTERVAL_MINUTES: '30', MAX_DOCS_PER_DAY: '2' }),

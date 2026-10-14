@@ -341,6 +341,46 @@ describe('processDocsItem', () => {
     expect(deps.removeSkillJunctions).toHaveBeenCalledTimes(1);
   });
 
+  test('sums classifier and drafting spend, and carries title and product, on success', async () => {
+    const deps = makeDeps({
+      classifyDocs: mock((_c: AppConfig, _ctx: ClassifierContext, onCost?: (usd: number) => void) => {
+        onCost?.(0.12);
+        return Promise.resolve({
+          kind: 'newfeature' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
+          candidates: [],
+          reasoning: 'test',
+        });
+      }),
+      generateDocs: mock((_c: AppConfig, ctx: DocsContext, onCost?: (usd: number) => void) => {
+        onCost?.(1.5);
+        writeFileSync(ctx.outputPath, '# Article\n');
+        return Promise.resolve('VALIDATOR: PASS');
+      }),
+    });
+
+    const result = await processDocsItem(cfg(), 42, deps);
+    expect(result.documented).toBe(true);
+    expect(result.costUsd).toBe(1.62);
+    expect(result.title).toBe(String(mockWorkItem().fields['System.Title']));
+    expect(result.productName).toBe('Continia Banking');
+  });
+
+  test('keeps the spend of a run that fails after the agents ran', async () => {
+    const deps = makeDeps({
+      generateDocs: mock((_c: AppConfig, _ctx: DocsContext, onCost?: (usd: number) => void) => {
+        onCost?.(0.75);
+        return Promise.reject(new Error('boom'));
+      }),
+    });
+
+    const result = await processDocsItem(cfg(), 42, deps);
+    expect(result.documented).toBe(false);
+    expect(result.costUsd).toBe(0.75);
+    expect(result.productName).toBe('Continia Banking');
+  });
+
   test('an update deliverable is named for its target id and framed as an update', async () => {
     const config = cfg();
     const uploadAttachment = mock(() =>

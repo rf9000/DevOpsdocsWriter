@@ -20,6 +20,7 @@ export function mockConfig(overrides: Partial<AppConfig> = {}): AppConfig {
     maxTurns: 60,
     promptPath: './prompt.md',
     stateDir: '.state',
+    costLogPath: '.state/cost-ledger.jsonl',
     dryRun: false,
     ...overrides,
   };

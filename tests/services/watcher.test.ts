@@ -16,6 +16,7 @@ function makeDeps(overrides: Partial<WatcherDeps> = {}): WatcherDeps {
     removeTagFromWorkItem: mock(() => Promise.resolve()),
     addTagToWorkItem: mock(() => Promise.resolve()),
     addWorkItemComment: mock(() => Promise.resolve({})),
+    recordLedger: mock(() => {}),
     ...overrides,
   };
 }
@@ -188,6 +189,116 @@ describe('runPollCycle', () => {
     const result = await runPollCycle(mockConfig(), store, deps);
     expect(result.errors).toBe(1);
     expect(result.documented).toBe(1);
+  });
+});
+
+describe('runPollCycle cost ledger', () => {
+  let dir: string;
+  let store: StateStore;
+  const at = new Date('2026-10-13T09:00:00.000Z');
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'watcher-ledger-'));
+    store = new StateStore(dir);
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  const ledgerLines = (deps: WatcherDeps) =>
+    (deps.recordLedger as ReturnType<typeof mock>).mock.calls.map((c) => (c as unknown[])[1]);
+
+  test('a documented item writes a completed line with cost, title and product', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([101])),
+      processDocsItem: mock(() =>
+        Promise.resolve({
+          itemId: 101,
+          documented: true,
+          title: 'Bank sync',
+          productName: 'Continia Banking',
+          costUsd: 1.2345,
+        }),
+      ),
+      now: () => at,
+    });
+    await runPollCycle(mockConfig(), store, deps);
+    expect(ledgerLines(deps)).toEqual([
+      {
+        at: at.toISOString(),
+        workItemId: 101,
+        outcome: 'completed',
+        costUsd: 1.2345,
+        title: 'Bank sync',
+        product: 'Continia Banking',
+      },
+    ]);
+  });
+
+  test('a failed run writes a failed line with its error and spend', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([102])),
+      processDocsItem: mock(() =>
+        Promise.resolve({ itemId: 102, documented: false, error: 'agent crashed', costUsd: 0.5 }),
+      ),
+      now: () => at,
+    });
+    await runPollCycle(mockConfig(), store, deps);
+    expect(ledgerLines(deps)).toEqual([
+      { at: at.toISOString(), workItemId: 102, outcome: 'failed', costUsd: 0.5, error: 'agent crashed' },
+    ]);
+  });
+
+  test('a thrown error writes a failed line with no spend', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([103])),
+      processDocsItem: mock(() => Promise.reject(new Error('boom'))),
+      now: () => at,
+    });
+    await runPollCycle(mockConfig(), store, deps);
+    expect(ledgerLines(deps)).toEqual([
+      { at: at.toISOString(), workItemId: 103, outcome: 'failed', costUsd: 0, error: 'Error: boom' },
+    ]);
+  });
+
+  test('an unresolved product writes one skipped line, with the comment, not one per poll', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([104])),
+      processDocsItem: mock(() =>
+        Promise.resolve({ itemId: 104, documented: false, error: 'unmapped', productIssue: 'could not map' }),
+      ),
+      now: () => at,
+    });
+    await runPollCycle(mockConfig(), store, deps);
+    await runPollCycle(mockConfig(), store, deps);
+    expect(ledgerLines(deps)).toEqual([
+      { at: at.toISOString(), workItemId: 104, outcome: 'skipped', costUsd: 0, reason: 'could not map' },
+    ]);
+  });
+
+  test('items skipped by the backoff write no line', async () => {
+    store.recordFailure(105, 'x', at);
+    store.recordFailure(105, 'x', at);
+    store.recordFailure(105, 'x', at);
+    const deps = makeDeps({ queryTaggedWorkItems: mock(() => Promise.resolve([105])), now: () => at });
+    await runPollCycle(mockConfig(), store, deps);
+    expect(deps.recordLedger).toHaveBeenCalledTimes(0);
+  });
+
+  test('a dry run writes no line', async () => {
+    const deps = makeDeps({ queryTaggedWorkItems: mock(() => Promise.resolve([106])) });
+    await runPollCycle(mockConfig({ dryRun: true }), store, deps);
+    expect(deps.recordLedger).toHaveBeenCalledTimes(0);
+  });
+
+  test('a ledger write failure does not fail the item', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([107])),
+      recordLedger: mock(() => {
+        throw new Error('disk full');
+      }),
+    });
+    const result = await runPollCycle(mockConfig(), store, deps);
+    expect(result.documented).toBe(1);
+    expect(store.isProcessed(107)).toBe(true);
   });
 });
 

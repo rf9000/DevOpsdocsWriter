@@ -162,11 +162,13 @@ function extractAssistantText(message: { message: { content: unknown[] } }): str
  * Run the Claude Agent SDK against the source repo to generate a documentation
  * article. The agent invokes the docs-article-generator skill, writes the
  * finished article to `context.outputPath`, and returns a short summary
- * (including the validator verdict) as its final message.
+ * (including the validator verdict) as its final message. `onCost` receives
+ * the run's USD as soon as the SDK reports it, also when the run then fails.
  */
 export async function generateDocs(
   config: AppConfig,
   context: DocsContext,
+  onCost?: (usd: number) => void,
 ): Promise<string> {
   const systemPrompt = buildSystemPrompt(
     config.promptPath,
@@ -235,6 +237,7 @@ export async function generateDocs(
           `  Cost: $${message.total_cost_usd.toFixed(4)} | ${message.usage.input_tokens ?? 0} in / ${message.usage.output_tokens ?? 0} out | ${message.num_turns} turns | ${models}`,
         );
         console.log(`  Tools: ${tools}`);
+        onCost?.(message.total_cost_usd);
         // Surface gate denials even on success — a "successful" run whose
         // Writes were denied is exactly the case where the deliverable ends up
         // missing and has to be recovered from the <<<ARTICLE>>> block.
