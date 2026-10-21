@@ -16,6 +16,7 @@ function makeDeps(overrides: Partial<WatcherDeps> = {}): WatcherDeps {
     removeTagFromWorkItem: mock(() => Promise.resolve()),
     addTagToWorkItem: mock(() => Promise.resolve()),
     addWorkItemComment: mock(() => Promise.resolve({})),
+    getWorkItemUpdates: mock(() => Promise.resolve([])),
     recordLedger: mock(() => {}),
     ...overrides,
   };
@@ -229,8 +230,46 @@ describe('runPollCycle cost ledger', () => {
         costUsd: 1.2345,
         title: 'Bank sync',
         product: 'Continia Banking',
+        triggeredBy: 'unknown',
       },
     ]);
+  });
+
+  test('the ledger line names who added the write-docs tag', async () => {
+    const config = mockConfig();
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([108])),
+      getWorkItemUpdates: mock(() =>
+        Promise.resolve([
+          {
+            revisedBy: { uniqueName: 'Ann@X.com' },
+            fields: { 'System.Tags': { newValue: config.writeDocsTag } },
+          },
+        ]),
+      ),
+      now: () => at,
+    });
+    await runPollCycle(config, store, deps);
+    expect(ledgerLines(deps)).toEqual([
+      { at: at.toISOString(), workItemId: 108, outcome: 'completed', costUsd: 0, triggeredBy: 'ann@x.com' },
+    ]);
+  });
+
+  test('a failing updates lookup does not fail the run', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: mock(() => Promise.resolve([109])),
+      getWorkItemUpdates: mock(() => Promise.reject(new Error('ado down'))),
+      now: () => at,
+    });
+    const result = await runPollCycle(mockConfig(), store, deps);
+    expect(result.documented).toBe(1);
+    expect((ledgerLines(deps)[0] as { triggeredBy: string }).triggeredBy).toBe('unknown');
+  });
+
+  test('a dry run skips the updates lookup', async () => {
+    const deps = makeDeps({ queryTaggedWorkItems: mock(() => Promise.resolve([110])) });
+    await runPollCycle(mockConfig({ dryRun: true }), store, deps);
+    expect(deps.getWorkItemUpdates).toHaveBeenCalledTimes(0);
   });
 
   test('a failed run writes a failed line with its error and spend', async () => {
@@ -243,7 +282,7 @@ describe('runPollCycle cost ledger', () => {
     });
     await runPollCycle(mockConfig(), store, deps);
     expect(ledgerLines(deps)).toEqual([
-      { at: at.toISOString(), workItemId: 102, outcome: 'failed', costUsd: 0.5, error: 'agent crashed' },
+      { at: at.toISOString(), workItemId: 102, outcome: 'failed', costUsd: 0.5, error: 'agent crashed', triggeredBy: 'unknown' },
     ]);
   });
 
@@ -255,7 +294,7 @@ describe('runPollCycle cost ledger', () => {
     });
     await runPollCycle(mockConfig(), store, deps);
     expect(ledgerLines(deps)).toEqual([
-      { at: at.toISOString(), workItemId: 103, outcome: 'failed', costUsd: 0, error: 'Error: boom' },
+      { at: at.toISOString(), workItemId: 103, outcome: 'failed', costUsd: 0, error: 'Error: boom', triggeredBy: 'unknown' },
     ]);
   });
 
@@ -270,7 +309,7 @@ describe('runPollCycle cost ledger', () => {
     await runPollCycle(mockConfig(), store, deps);
     await runPollCycle(mockConfig(), store, deps);
     expect(ledgerLines(deps)).toEqual([
-      { at: at.toISOString(), workItemId: 104, outcome: 'skipped', costUsd: 0, reason: 'could not map' },
+      { at: at.toISOString(), workItemId: 104, outcome: 'skipped', costUsd: 0, reason: 'could not map', triggeredBy: 'unknown' },
     ]);
   });
 

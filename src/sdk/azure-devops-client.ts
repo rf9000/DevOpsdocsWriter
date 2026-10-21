@@ -4,6 +4,7 @@ import type {
   PullRequestRef,
   WorkItemComment,
   WorkItemResponse,
+  WorkItemUpdate,
 } from '../types/index.ts';
 
 export class AzureDevOpsError extends Error {
@@ -212,6 +213,16 @@ export async function getWorkItemComments(
   const path = `wit/workItems/${workItemId}/comments?api-version=7.0-preview.4`;
   const data = await adoFetchWithRetry<CommentsListResponse>(config, path);
   return data.comments ?? [];
+}
+
+/** Revision history of a work item, oldest first. */
+export async function getWorkItemUpdates(
+  config: AppConfig,
+  workItemId: number,
+): Promise<WorkItemUpdate[]> {
+  const path = `wit/workItems/${workItemId}/updates?api-version=7.1`;
+  const data = await adoFetchWithRetry<{ value?: WorkItemUpdate[] }>(config, path);
+  return data.value ?? [];
 }
 
 export async function addWorkItemComment(

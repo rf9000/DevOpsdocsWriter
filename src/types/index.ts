@@ -148,6 +148,26 @@ export interface LedgerRecord {
   reason?: string;
   /** The error of a failed run. */
   error?: string;
+  /** Who tagged the item: a lowercased email, or "unknown". */
+  triggeredBy?: string;
+}
+
+/** An Azure DevOps identity. */
+export interface IdentityRef {
+  id?: string;
+  displayName?: string;
+  uniqueName?: string;
+}
+
+/**
+ * One revision from `/workItems/{id}/updates`. `fields` maps a field reference
+ * name to its old/new value for that revision.
+ */
+export interface WorkItemUpdate {
+  id?: number;
+  revisedBy?: IdentityRef;
+  revisedDate?: string;
+  fields?: Record<string, { oldValue?: unknown; newValue?: unknown }>;
 }
 
 /** The three kinds of deliverable the pipeline can produce (see code-to-docs.md §6). */

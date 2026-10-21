@@ -3,6 +3,7 @@ import { StateStore } from '../state/state-store.ts';
 import { appendCostRecord } from '../state/cost-ledger.ts';
 import * as sdk from '../sdk/azure-devops-client.ts';
 import * as proc from './processor.ts';
+import { lookupTriggeredBy } from '../utils/triggered-by.ts';
 
 export interface WatcherDeps {
   queryTaggedWorkItems: (config: AppConfig, tag: string) => Promise<number[]>;
@@ -22,6 +23,7 @@ export interface WatcherDeps {
     workItemId: number,
     html: string,
   ) => Promise<unknown>;
+  getWorkItemUpdates: typeof sdk.getWorkItemUpdates;
   /** Append one line to the cost ledger, the full processed history. */
   recordLedger: (config: AppConfig, record: LedgerRecord) => void;
   /** Clock for the failure backoff; injectable for tests. */
@@ -34,6 +36,7 @@ const defaultDeps: WatcherDeps = {
   removeTagFromWorkItem: sdk.removeTagFromWorkItem,
   addTagToWorkItem: sdk.addTagToWorkItem,
   addWorkItemComment: sdk.addWorkItemComment,
+  getWorkItemUpdates: sdk.getWorkItemUpdates,
   recordLedger: (config, record) => appendCostRecord(config.costLogPath, record),
 };
 
@@ -99,6 +102,7 @@ export async function runPollCycle(
     outcome: LedgerRecord['outcome'],
     result: DocsProcessResult | undefined,
     detail: { reason?: string; error?: string } = {},
+    triggeredBy?: string,
   ) => {
     if (config.dryRun) return;
     try {
@@ -110,6 +114,7 @@ export async function runPollCycle(
         ...(result?.title ? { title: result.title } : {}),
         ...(result?.productName ? { product: result.productName } : {}),
         ...detail,
+        ...(triggeredBy ? { triggeredBy } : {}),
       });
     } catch (err) {
       log(`#${itemId}: Warning — failed to write the cost ledger: ${err instanceof Error ? err.message : String(err)}`);
@@ -133,13 +138,22 @@ export async function runPollCycle(
       continue;
     }
 
+    // Who tagged the item. Never throws; a dry run writes no ledger, so skip it.
+    const triggeredBy = config.dryRun
+      ? undefined
+      : await lookupTriggeredBy(
+          () => deps.getWorkItemUpdates(config, itemId),
+          [config.writeDocsTag],
+          (msg) => log(`#${itemId}: Warning — ${msg}`),
+        );
+
     try {
       const result = await deps.processDocsItem(config, itemId);
       if (result.documented) {
         stateStore.clearFailure(itemId);
         stateStore.markProcessed(itemId, now(), result.productName);
         stateStore.incrementDailyCount();
-        recordLedger(itemId, 'completed', result);
+        recordLedger(itemId, 'completed', result, {}, triggeredBy);
         documented++;
 
         // Remove the tag so the item is not picked up again (skipped in dry-run).
@@ -169,7 +183,7 @@ export async function runPollCycle(
         // picked up at once.
         if (!result.productIssue) {
           recordFailure(itemId, result.error ?? 'unknown reason');
-          recordLedger(itemId, 'failed', result, { error: result.error ?? 'unknown reason' });
+          recordLedger(itemId, 'failed', result, { error: result.error ?? 'unknown reason' }, triggeredBy);
         }
 
         // Product could not be resolved: tell the work item why, exactly once.
@@ -185,7 +199,7 @@ export async function runPollCycle(
               );
               stateStore.markProductCommented(itemId);
               // Logged once, with the comment: the item retries every poll.
-              recordLedger(itemId, 'skipped', result, { reason: result.productIssue });
+              recordLedger(itemId, 'skipped', result, { reason: result.productIssue }, triggeredBy);
               log(`#${itemId}: Posted product-resolution comment (once)`);
             } catch (commentErr) {
               log(`#${itemId}: Warning — failed to post product-resolution comment: ${commentErr}`);
@@ -199,7 +213,7 @@ export async function runPollCycle(
       log(`#${itemId}: Fatal error — ${err}`);
       errors++;
       recordFailure(itemId, String(err));
-      recordLedger(itemId, 'failed', undefined, { error: String(err) });
+      recordLedger(itemId, 'failed', undefined, { error: String(err) }, triggeredBy);
     }
   }
 
