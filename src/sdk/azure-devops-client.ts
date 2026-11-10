@@ -17,11 +17,11 @@ export class AzureDevOpsError extends Error {
   }
 }
 
-export async function adoFetch<T>(
+async function adoRequest(
   config: AppConfig,
   path: string,
   options?: RequestInit,
-): Promise<T> {
+): Promise<Response> {
   const url = `${config.orgUrl}/${config.project}/_apis/${path}`;
   const authHeader =
     'Basic ' + Buffer.from(':' + config.pat).toString('base64');
@@ -45,24 +45,32 @@ export async function adoFetch<T>(
     );
   }
 
+  return res;
+}
+
+export async function adoFetch<T>(
+  config: AppConfig,
+  path: string,
+  options?: RequestInit,
+): Promise<T> {
+  const res = await adoRequest(config, path, options);
   return (await res.json()) as T;
 }
 
 const DEFAULT_RETRY_DELAYS = [1000, 2000, 4000];
 
-export async function adoFetchWithRetry<T>(
-  config: AppConfig,
-  path: string,
-  options?: RequestInit,
-  retryDelays: number[] = DEFAULT_RETRY_DELAYS,
+/** Retry `attempt` on 5xx and network errors; 4xx fails at once. */
+async function withRetry<T>(
+  attempt: () => Promise<T>,
+  retryDelays: number[],
 ): Promise<T> {
   const maxAttempts = retryDelays.length + 1;
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (let n = 1; n <= maxAttempts; n++) {
     try {
-      return await adoFetch<T>(config, path, options);
+      return await attempt();
     } catch (err: unknown) {
-      const isLastAttempt = attempt === maxAttempts;
+      const isLastAttempt = n === maxAttempts;
 
       if (err instanceof AzureDevOpsError) {
         if (err.statusCode < 500) {
@@ -77,12 +85,21 @@ export async function adoFetchWithRetry<T>(
         }
       }
 
-      const delay = retryDelays[attempt - 1] ?? 0;
+      const delay = retryDelays[n - 1] ?? 0;
       await new Promise((r) => setTimeout(r, delay));
     }
   }
 
-  throw new Error('adoFetchWithRetry: unexpected code path');
+  throw new Error('withRetry: unexpected code path');
+}
+
+export async function adoFetchWithRetry<T>(
+  config: AppConfig,
+  path: string,
+  options?: RequestInit,
+  retryDelays: number[] = DEFAULT_RETRY_DELAYS,
+): Promise<T> {
+  return withRetry(() => adoFetch<T>(config, path, options), retryDelays);
 }
 
 export async function getWorkItem(
@@ -273,20 +290,31 @@ interface PullRequestResponse {
   status?: string;
   sourceRefName?: string;
   targetRefName?: string;
+  lastMergeSourceCommit?: { commitId?: string };
 }
 
 interface IterationsResponse {
-  value: Array<{ id: number }>;
+  value: Array<{ id: number; sourceRefCommit?: { commitId?: string } }>;
 }
 
 interface ChangesResponse {
-  changeEntries?: Array<{ item?: { path?: string } }>;
+  changeEntries?: Array<{ changeType?: string; item?: { path?: string } }>;
+  /** Both are 0 (or absent) on the last page. */
+  nextSkip?: number;
+  nextTop?: number;
 }
 
+/** A pull request whose code is not on the target branch yet. */
+const UNMERGED_STATUS = 'active';
+
 /**
- * Fetch PR metadata and the list of changed file paths (from the latest
- * iteration). The agent reads the actual code itself; this just points it
- * at the relevant files.
+ * Fetch PR metadata, the changed file paths and the head commit (both from the
+ * latest iteration). The agent reads the actual code itself; this points it at
+ * the relevant files and, for an unmerged PR, pins the commit to read them at.
+ *
+ * The file listing is best-effort for a merged PR, where the working tree holds
+ * the code anyway. For an unmerged PR it is required: without it the changed
+ * files cannot be snapshotted and the agent would read stale code.
  */
 export async function getPullRequestContext(
   config: AppConfig,
@@ -299,6 +327,8 @@ export async function getPullRequestContext(
   );
 
   let changedFiles: string[] = [];
+  let deletedFiles: string[] = [];
+  let headCommitId = pr.lastMergeSourceCommit?.commitId ?? '';
   try {
     const iterations = await adoFetchWithRetry<IterationsResponse>(
       config,
@@ -306,16 +336,27 @@ export async function getPullRequestContext(
     );
     const last = iterations.value?.[iterations.value.length - 1];
     if (last) {
-      const changes = await adoFetchWithRetry<ChangesResponse>(
-        config,
-        `git/repositories/${ref.repoId}/pullRequests/${ref.pullRequestId}/iterations/${last.id}/changes?api-version=7.0`,
-      );
-      changedFiles = (changes.changeEntries ?? [])
-        .map((c) => c.item?.path ?? '')
-        .filter((p) => p.length > 0);
+      headCommitId = last.sourceRefCommit?.commitId ?? headCommitId;
+      const changesPath = `git/repositories/${ref.repoId}/pullRequests/${ref.pullRequestId}/iterations/${last.id}/changes?api-version=7.0`;
+      const entries: NonNullable<ChangesResponse['changeEntries']> = [];
+      let page = await adoFetchWithRetry<ChangesResponse>(config, changesPath);
+      entries.push(...(page.changeEntries ?? []));
+      while (page.nextSkip && page.nextTop) {
+        page = await adoFetchWithRetry<ChangesResponse>(
+          config,
+          `${changesPath}&$skip=${page.nextSkip}&$top=${page.nextTop}`,
+        );
+        entries.push(...(page.changeEntries ?? []));
+      }
+      const withPath = entries.filter((c) => (c.item?.path ?? '').length > 0);
+      changedFiles = withPath.map((c) => c.item!.path!);
+      deletedFiles = withPath
+        .filter((c) => /\bdelete\b/i.test(c.changeType ?? ''))
+        .map((c) => c.item!.path!);
     }
-  } catch {
-    // changed-file listing is best-effort; metadata alone is still useful
+  } catch (err) {
+    if (pr.status === UNMERGED_STATUS) throw err;
+    // merged PR: the listing only points the agent at files; metadata alone is still useful
   }
 
   return {
@@ -326,7 +367,27 @@ export async function getPullRequestContext(
     sourceRefName: pr.sourceRefName ?? '',
     targetRefName: pr.targetRefName ?? '',
     changedFiles,
+    repoId: ref.repoId,
+    headCommitId,
+    deletedFiles,
   };
+}
+
+/** Read one file of a repository as text, at an exact commit. */
+export async function getFileAtCommit(
+  config: AppConfig,
+  repoId: string,
+  path: string,
+  commitId: string,
+  retryDelays: number[] = DEFAULT_RETRY_DELAYS,
+): Promise<string> {
+  const apiPath =
+    `git/repositories/${repoId}/items?path=${encodeURIComponent(path)}` +
+    `&versionDescriptor.version=${commitId}&versionDescriptor.versionType=commit&api-version=7.0`;
+  return withRetry(async () => {
+    const res = await adoRequest(config, apiPath, { headers: { Accept: 'text/plain' } });
+    return res.text();
+  }, retryDelays);
 }
 
 export interface UploadedAttachment {

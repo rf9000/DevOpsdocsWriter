@@ -80,7 +80,31 @@ export interface PrContext {
   status: string;
   sourceRefName: string;
   targetRefName: string;
+  /** Every path the PR touches, deleted files included. */
   changedFiles: string[];
+  /** Repository the PR lives in; needed to read its files over REST. */
+  repoId?: string;
+  /** Head commit of the PR's latest iteration; empty when it could not be determined. */
+  headCommitId?: string;
+  /** The subset of `changedFiles` the PR deletes. */
+  deletedFiles?: string[];
+  /** Set for an unmerged PR once its changed files were fetched at the head commit. */
+  snapshot?: PrSnapshot;
+}
+
+/**
+ * The changed files of an unmerged pull request, fetched at its head commit
+ * and written to disk for the agent. The AL repo holds merged code only, so
+ * without this the agent would read whatever a local checkout happens to hold.
+ */
+export interface PrSnapshot {
+  commitId: string;
+  /** Absolute directory; each file sits under it at its repo-relative path. */
+  dir: string;
+  /** Repo-relative paths of the files written to `dir`. */
+  files: string[];
+  /** Repo-relative paths of source files the PR deletes. */
+  deletedFiles: string[];
 }
 
 /** Persisted state tracking which items have already been documented + daily cap. */

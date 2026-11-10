@@ -3,6 +3,7 @@ import { dirname, join } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { AppConfig, OutputKind, PrContext } from '../types/index.ts';
 import type { DocsHome } from '../config/products.ts';
+import { hasSnapshot, renderSnapshotLines } from './pr-snapshot.ts';
 
 /** One of a product's docs homes, located on disk. */
 export type ResolvedHome = DocsHome & {
@@ -282,10 +283,14 @@ export function buildClassifierUserPrompt(context: ClassifierContext): string {
       if (pr.changedFiles.length > 0) {
         lines.push('', '**Changed files:**', ...pr.changedFiles.map((f) => `- ${f}`));
       }
+      lines.push(...renderSnapshotLines(pr));
     }
+    const sourceOfTruth = hasSnapshot(context.pullRequests)
+      ? 'The AL code is the source of truth: the snapshot for the files an unmerged pull request changes, your working directory for everything else'
+      : 'The AL code in your working directory is the source of truth';
     lines.push(
       '',
-      'Use the changed files as entry points to find the pages, fields, columns, and actions this change touches, and their captions. The AL code in your working directory is the source of truth; on any mismatch between prose and code, code wins.',
+      `Use the changed files as entry points to find the pages, fields, columns, and actions this change touches, and their captions. ${sourceOfTruth}; on any mismatch between prose and code, code wins.`,
     );
   }
 

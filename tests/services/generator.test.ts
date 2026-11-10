@@ -86,6 +86,43 @@ describe('buildUserPrompt', () => {
   });
 });
 
+describe('buildUserPrompt with an unmerged PR snapshot', () => {
+  const snapshotPr = {
+    pullRequestId: 61281,
+    title: 'Store payment file hash',
+    description: 'Adds a Verify File Hash action.',
+    status: 'active',
+    sourceRefName: 'refs/heads/feat',
+    targetRefName: 'refs/heads/main',
+    changedFiles: ['/app/PaymentRegisters.Page.al'],
+    snapshot: {
+      commitId: 'ada0bae7aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      dir: '/out/.pr-snapshots/workitem-42/pr-61281',
+      files: ['/app/PaymentRegisters.Page.al'],
+      deletedFiles: [],
+    },
+  };
+
+  test('makes the snapshot the source of truth for the changed files', () => {
+    const prompt = buildUserPrompt(ctx({ pullRequests: [snapshotPr] }));
+
+    expect(prompt).toContain('/out/.pr-snapshots/workitem-42/pr-61281');
+    expect(prompt).toContain('not merged');
+    // The working directory must no longer be presented as the merged state.
+    expect(prompt).not.toContain('it is the current, merged state of the feature');
+    expect(prompt).toMatch(/source of truth/i);
+    expect(prompt).toMatch(/do not document/i);
+  });
+
+  test('keeps the working directory as source of truth when every PR is merged', () => {
+    const prompt = buildUserPrompt(
+      ctx({ pullRequests: [{ ...snapshotPr, status: 'completed', snapshot: undefined }] }),
+    );
+    expect(prompt).toContain('it is the current, merged state of the feature');
+    expect(prompt).not.toContain('.pr-snapshots');
+  });
+});
+
 describe('buildSystemPrompt', () => {
   let dir: string;
   let promptPath: string;

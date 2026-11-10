@@ -16,7 +16,7 @@ docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-ge
 ## Pipeline (per tagged work item)
 
 1. `watcher.ts` polls `queryTaggedWorkItems(writeDocsTag)`.
-2. `processor.ts` gathers context: `getWorkItem` (+relations) → `getWorkItemComments` → `parsePullRequestRefs` → `getPullRequestContext` (metadata + changed files).
+2. `processor.ts` gathers context: `getWorkItem` (+relations) → `getWorkItemComments` → `parsePullRequestRefs` → `getPullRequestContext` (metadata + changed files + head commit) → `pr-snapshot.ts`: for a PR that is not merged (`active`), fetches every changed `.al` file at the head commit over REST into `OUTPUT_DIR/.pr-snapshots/workitem-<id>/` (removed in a `finally`). The AL repo holds merged code only, so the snapshot is the source of truth for those files. Non-optional: a snapshot failure fails the item (tag kept → retried).
 3. `classifier.ts` runs a read-only classifier agent (Read/Grep/Glob/LSP, cwd = the product's AL repo) that decides `newfeature`/`update`/`changelog` + the target article — and, for a product with more than one docs home, which home — returned as a structured `<<<CLASSIFICATION>>>` block. Non-optional: a classifier failure fails the item (tag kept → retried). The decision drives the drafting prompt, the deliverable filename, and a code-generated candidate-articles note in the work-item comment.
 4. `skill-linker.ts` junctions `.claude/skills/*` into `{TARGET_REPO_PATH}/.claude/skills/` (removed in a `finally`).
 5. `generator.ts` runs the agent; it invokes `docs-article-generator`, auto-picks the next `<PREFIX>-###`, and writes the article to `OUTPUT_DIR`. Writes are fenced to `OUTPUT_DIR` via `canUseTool`.

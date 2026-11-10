@@ -8,6 +8,7 @@ import {
   getWorkItemComments,
   parsePullRequestRefs,
   getPullRequestContext,
+  getFileAtCommit,
   uploadAttachment,
   linkAttachmentToWorkItem,
   addTagToWorkItem,
@@ -268,6 +269,107 @@ describe('getPullRequestContext', () => {
     });
     expect(result.title).toBe('T');
     expect(result.changedFiles).toEqual([]);
+  });
+});
+
+describe('getPullRequestContext: head commit and deletions', () => {
+  test('carries the repo, the head commit of the last iteration and the deleted files', async () => {
+    setSequentialMockFetch(
+      { body: { pullRequestId: 5, title: 'T', status: 'active' } },
+      {
+        body: {
+          value: [
+            { id: 1, sourceRefCommit: { commitId: 'old' } },
+            { id: 2, sourceRefCommit: { commitId: 'head' } },
+          ],
+        },
+      },
+      {
+        body: {
+          changeEntries: [
+            { changeType: 'edit', item: { path: '/src/A.al' } },
+            { changeType: 'delete', item: { path: '/src/Gone.al' } },
+            { changeType: 'delete, sourceRename', item: { path: '/src/Old.al' } },
+          ],
+        },
+      },
+    );
+
+    const result = await getPullRequestContext(mockConfig(), {
+      projectId: 'p',
+      repoId: 'r',
+      pullRequestId: 5,
+    });
+
+    expect(result.repoId).toBe('r');
+    expect(result.headCommitId).toBe('head');
+    expect(result.changedFiles).toEqual(['/src/A.al', '/src/Gone.al', '/src/Old.al']);
+    expect(result.deletedFiles).toEqual(['/src/Gone.al', '/src/Old.al']);
+  });
+
+  test('follows paging so no changed file is missed', async () => {
+    setSequentialMockFetch(
+      { body: { pullRequestId: 5, title: 'T', status: 'active' } },
+      { body: { value: [{ id: 1, sourceRefCommit: { commitId: 'head' } }] } },
+      { body: { changeEntries: [{ item: { path: '/src/A.al' } }], nextSkip: 1, nextTop: 1 } },
+      { body: { changeEntries: [{ item: { path: '/src/B.al' } }], nextSkip: 0, nextTop: 0 } },
+    );
+
+    const result = await getPullRequestContext(mockConfig(), {
+      projectId: 'p',
+      repoId: 'r',
+      pullRequestId: 5,
+    });
+
+    expect(result.changedFiles).toEqual(['/src/A.al', '/src/B.al']);
+    expect(mockFn.mock.calls[3]![0] as string).toContain('$skip=1');
+  });
+
+  test('fails for an unmerged PR whose changed files cannot be listed', async () => {
+    setSequentialMockFetch(
+      { body: { pullRequestId: 5, title: 'T', status: 'active' } },
+      { body: 'nope', status: 404 },
+    );
+    await expect(
+      getPullRequestContext(mockConfig(), { projectId: 'p', repoId: 'r', pullRequestId: 5 }),
+    ).rejects.toThrow();
+  });
+
+  test('keeps the file listing best-effort for a completed PR', async () => {
+    setSequentialMockFetch(
+      { body: { pullRequestId: 5, title: 'T', status: 'completed' } },
+      { body: 'nope', status: 404 },
+    );
+    const result = await getPullRequestContext(mockConfig(), {
+      projectId: 'p',
+      repoId: 'r',
+      pullRequestId: 5,
+    });
+    expect(result.changedFiles).toEqual([]);
+  });
+});
+
+describe('getFileAtCommit', () => {
+  test('requests the file as text at the given commit', async () => {
+    mockFn = mock(() => Promise.resolve(new Response('page 50100 "X" { }', { status: 200 })));
+    globalThis.fetch = mockFn as unknown as typeof fetch;
+
+    const text = await getFileAtCommit(mockConfig(), 'repo-1', '/app/My Page.al', 'abc123');
+
+    expect(text).toBe('page 50100 "X" { }');
+    const url = mockFn.mock.calls[0]![0] as string;
+    expect(url).toContain('git/repositories/repo-1/items?');
+    expect(url).toContain(`path=${encodeURIComponent('/app/My Page.al')}`);
+    expect(url).toContain('versionDescriptor.version=abc123');
+    expect(url).toContain('versionDescriptor.versionType=commit');
+    const init = mockFn.mock.calls[0]![1] as RequestInit;
+    expect((init.headers as Record<string, string>).Accept).toBe('text/plain');
+  });
+
+  test('throws AzureDevOpsError when the file is missing', async () => {
+    mockFn = mock(() => Promise.resolve(new Response('not found', { status: 404 })));
+    globalThis.fetch = mockFn as unknown as typeof fetch;
+    await expect(getFileAtCommit(mockConfig(), 'r', '/a.al', 'c')).rejects.toThrow(AzureDevOpsError);
   });
 });
 

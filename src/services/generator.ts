@@ -6,6 +6,7 @@ import type { AppConfig, PrContext } from '../types/index.ts';
 import type { DiscoveredSkill } from './skill-loader.ts';
 import type { DocsClassification } from './classifier.ts';
 import { renderArticlePath } from './classifier.ts';
+import { hasSnapshot, renderSnapshotLines } from './pr-snapshot.ts';
 
 /**
  * Start of a command: the beginning of the line, or just after a `;`, `&&`,
@@ -420,11 +421,17 @@ export function buildUserPrompt(context: DocsContext): string {
           ...pr.changedFiles.map((f) => `- ${f}`),
         );
       }
+      lines.push(...renderSnapshotLines(pr));
     }
+    // An unmerged PR's change is not in the working directory; its snapshot is
+    // the only reliable copy, so the source-of-truth statement has to name it.
+    const sourceOfTruth = hasSnapshot(context.pullRequests)
+      ? 'The AL code is the source of truth: the snapshot for the files an unmerged pull request changes, your working directory for everything else. Together they are the current state of the feature.'
+      : 'The AL code in your working directory is the source of truth — it is the current, merged state of the feature.';
     lines.push(
       '',
       'Use the changed files as entry points, but reconstruct the COMPLETE feature flow from the AL codebase (do not document only the diff).',
-      'The AL code in your working directory is the source of truth — it is the current, merged state of the feature. Descriptions, comments, and PR descriptions are written early and may describe behavior that was changed or removed before merge. If prose claims a behavior, page, field, action, or UI element you cannot find in the current code, treat it as removed: do not document it. On any mismatch between prose and code, code wins.',
+      `${sourceOfTruth} Descriptions, comments, and PR descriptions are written early and may describe behavior that was changed or removed before merge. If prose claims a behavior, page, field, action, or UI element you cannot find in the current code, treat it as removed: do not document it. On any mismatch between prose and code, code wins.`,
     );
   }
 

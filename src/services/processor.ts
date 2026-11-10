@@ -17,6 +17,7 @@ import * as sdk from '../sdk/azure-devops-client.ts';
 import * as gen from './generator.ts';
 import * as linker from './skill-linker.ts';
 import * as classifier from './classifier.ts';
+import * as snapshots from './pr-snapshot.ts';
 import type { ClassifierContext, DocsClassification, ResolvedHome } from './classifier.ts';
 import { discoverSkills } from './skill-loader.ts';
 import { markdownToHtml, stripHtmlToText } from '../utils/html.ts';
@@ -28,6 +29,9 @@ export interface ProcessorDeps {
   getWorkItemComments: (config: AppConfig, id: number) => Promise<WorkItemComment[]>;
   parsePullRequestRefs: (workItem: WorkItemResponse) => PullRequestRef[];
   getPullRequestContext: (config: AppConfig, ref: PullRequestRef) => Promise<PrContext>;
+  /** Fetches an unmerged PR's changed files at its head commit; other PRs pass through. */
+  snapshotPullRequest: (config: AppConfig, itemId: number, pr: PrContext) => Promise<PrContext>;
+  removeSnapshots: (config: AppConfig, itemId: number) => void;
   discoverSkills: (skillsRoot: string) => DiscoveredSkill[];
   createSkillJunctions: (targetRepoPath: string, skillsSourceDir: string) => string[];
   removeSkillJunctions: (created: string[]) => void;
@@ -61,6 +65,8 @@ const defaultDeps: ProcessorDeps = {
   getWorkItemComments: sdk.getWorkItemComments,
   parsePullRequestRefs: sdk.parsePullRequestRefs,
   getPullRequestContext: sdk.getPullRequestContext,
+  snapshotPullRequest: snapshots.snapshotPullRequest,
+  removeSnapshots: snapshots.removeSnapshots,
   discoverSkills,
   createSkillJunctions: linker.createSkillJunctions,
   removeSkillJunctions: linker.removeSkillJunctions,
@@ -420,11 +426,16 @@ export async function gatherItemContext(
   const prRefs = deps.parsePullRequestRefs(workItem);
   const pullRequests: PrContext[] = [];
   for (const ref of prRefs) {
+    let pr: PrContext;
     try {
-      pullRequests.push(await deps.getPullRequestContext(config, ref));
+      pr = await deps.getPullRequestContext(config, ref);
     } catch (err) {
       log(`  #${itemId}: Skipping PR #${ref.pullRequestId} — ${err instanceof Error ? err.message : String(err)}`);
+      continue;
     }
+    // Not best-effort: an unmerged PR without a snapshot would be documented
+    // from whatever the local clone holds, so a failure here fails the item.
+    pullRequests.push(await deps.snapshotPullRequest(config, itemId, pr));
   }
   if (pullRequests.length > 0) log(`  #${itemId}: ${pullRequests.length} linked PR(s)`);
 
@@ -441,6 +452,18 @@ export async function classifyItem(
   config: AppConfig,
   itemId: number,
   deps: ProcessorDeps = defaultDeps,
+): Promise<{ classification: DocsClassification } | { productIssue: string }> {
+  try {
+    return await classifyGatheredItem(config, itemId, deps);
+  } finally {
+    deps.removeSnapshots(config, itemId);
+  }
+}
+
+async function classifyGatheredItem(
+  config: AppConfig,
+  itemId: number,
+  deps: ProcessorDeps,
 ): Promise<{ classification: DocsClassification } | { productIssue: string }> {
   const gathered = await gatherItemContext(config, itemId, deps);
   if ('productIssue' in gathered) return gathered;
@@ -691,6 +714,8 @@ async function runDocsItem(
     const errorMsg = err instanceof Error ? err.message : String(err);
     log(`  #${itemId}: Error — ${errorMsg}`);
     return { itemId, documented: false, error: errorMsg };
+  } finally {
+    deps.removeSnapshots(config, itemId);
   }
 }
 

@@ -2,7 +2,7 @@ import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import type { AppConfig } from '../../src/types/index.ts';
+import type { AppConfig, PrContext } from '../../src/types/index.ts';
 import {
   processDocsItem,
   classifyItem,
@@ -36,6 +36,8 @@ function makeDeps(overrides: Partial<ProcessorDeps> = {}): ProcessorDeps {
     getPullRequestContext: mock(() =>
       Promise.reject(new Error('should not be called')),
     ),
+    snapshotPullRequest: mock((_cfg: AppConfig, _id: number, pr: PrContext) => Promise.resolve(pr)),
+    removeSnapshots: mock(() => {}),
     discoverSkills: mock(() => []),
     createSkillJunctions: mock(() => ['link-a']),
     removeSkillJunctions: mock(() => {}),
@@ -253,6 +255,88 @@ describe('processDocsItem', () => {
 
     await processDocsItem(config, 42, deps);
     expect(getPr).toHaveBeenCalledTimes(1);
+  });
+
+  test('hands the agent the snapshotted PR and removes the snapshot afterwards', async () => {
+    const config = cfg();
+    const livePr: PrContext = {
+      pullRequestId: 7,
+      title: 'PR',
+      description: '',
+      status: 'active',
+      sourceRefName: '',
+      targetRefName: '',
+      changedFiles: ['/app/A.Page.al'],
+      repoId: 'r',
+      headCommitId: 'head',
+    };
+    const snapshot = { commitId: 'head', dir: join(outDir, 'snap'), files: ['/app/A.Page.al'], deletedFiles: [] };
+    const snapshotPullRequest = mock((_cfg: AppConfig, _id: number, pr: PrContext) =>
+      Promise.resolve({ ...pr, snapshot }),
+    );
+    const removeSnapshots = mock(() => {});
+    let seenByClassifier: PrContext[] = [];
+    let seenByDrafter: PrContext[] = [];
+    const deps = makeDeps({
+      parsePullRequestRefs: mock(() => [{ projectId: 'p', repoId: 'r', pullRequestId: 7 }]),
+      getPullRequestContext: mock(() => Promise.resolve(livePr)),
+      snapshotPullRequest,
+      removeSnapshots,
+      classifyDocs: mock((_cfg: AppConfig, ctx: ClassifierContext) => {
+        seenByClassifier = ctx.pullRequests;
+        return Promise.resolve({
+          kind: 'newfeature' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
+          candidates: [],
+          reasoning: 'test',
+        });
+      }),
+      generateDocs: mock((_cfg: AppConfig, ctx: DocsContext) => {
+        seenByDrafter = ctx.pullRequests;
+        // The snapshot must still exist while the agent runs.
+        expect(removeSnapshots).not.toHaveBeenCalled();
+        writeFileSync(ctx.outputPath, '# Article\n');
+        return Promise.resolve('VALIDATOR: PASS');
+      }),
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(true);
+    expect(snapshotPullRequest).toHaveBeenCalledTimes(1);
+    expect(seenByClassifier[0]!.snapshot).toEqual(snapshot);
+    expect(seenByDrafter[0]!.snapshot).toEqual(snapshot);
+    expect(removeSnapshots).toHaveBeenCalledTimes(1);
+  });
+
+  test('fails the item, without drafting, when an unmerged PR cannot be snapshotted', async () => {
+    const config = cfg();
+    const removeSnapshots = mock(() => {});
+    const deps = makeDeps({
+      parsePullRequestRefs: mock(() => [{ projectId: 'p', repoId: 'r', pullRequestId: 7 }]),
+      getPullRequestContext: mock(() =>
+        Promise.resolve({
+          pullRequestId: 7,
+          title: 'PR',
+          description: '',
+          status: 'active',
+          sourceRefName: '',
+          targetRefName: '',
+          changedFiles: ['/app/A.Page.al'],
+        }),
+      ),
+      snapshotPullRequest: mock(() => Promise.reject(new Error('PR #7: could not read /app/A.Page.al'))),
+      removeSnapshots,
+    });
+
+    const result = await processDocsItem(config, 42, deps);
+
+    expect(result.documented).toBe(false);
+    expect(result.error).toContain('PR #7');
+    expect(deps.classifyDocs).not.toHaveBeenCalled();
+    expect(deps.generateDocs).not.toHaveBeenCalled();
+    expect(removeSnapshots).toHaveBeenCalledTimes(1);
   });
 
   test('fails when the agent produces no article file and no recoverable article block', async () => {
