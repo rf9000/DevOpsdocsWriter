@@ -16,20 +16,25 @@ RUN apt-get update \
 # (401) and rejects --dangerously-skip-permissions when run as root — so 'bun'
 # must own this home to write ~/.claude.json and refreshed OAuth tokens.
 ENV HOME=/home/claude
-RUN mkdir -p /home/claude/.claude && chown -R bun:bun /home/claude
 
 WORKDIR /app
 
-# Install dependencies first for layer caching.
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile
+# State is persisted via a named volume mounted at /app/.state. /app is handed to
+# bun while still empty: a `chown -R /app` after the install rewrites every file
+# into a new layer and stores node_modules twice.
+RUN mkdir -p /home/claude/.claude /app/.state /app/.output \
+    && chown -R bun:bun /home/claude /app
+
+# Install dependencies first for layer caching, as bun so the files are born with
+# the right owner. Bun's download cache goes in the same RUN, or the layer keeps it.
+USER bun
+COPY --chown=bun:bun package.json bun.lock ./
+RUN bun install --frozen-lockfile && bun pm cache rm
 
 # App source: src/ (code + prompts) and .claude/skills (junction-linked into
 # the target repo at run time) are both required by the running watcher.
-COPY . .
-
-# State is persisted via a named volume mounted here.
-RUN mkdir -p /app/.state /app/.output && chown -R bun:bun /app
+COPY --chown=bun:bun . .
+USER root
 
 # Entrypoint fixes volume ownership as root, then drops to the non-root 'bun'
 # user to start the watcher (see entrypoint.sh for why root cannot run it).
