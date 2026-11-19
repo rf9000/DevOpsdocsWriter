@@ -9,6 +9,9 @@
 # for the cron entry, exit codes, and testing.
 #
 # Usage: sync-style-guide.sh [--dry-run] [--skip-docker] [--repo-root <path>] [--env-file <path>]
+#                            [--upstream-file <path>]
+#
+# --upstream-file uses a local file as the fetched upstream (no network, no token). For tests.
 #
 # Exit codes:
 #   0 = up to date / synced successfully
@@ -18,6 +21,8 @@
 #   4 = git preflight or pull failed (needs a human: wrong branch, dirty target file, diverged clone)
 #   5 = git commit/push failed (unpushed commit is retried on the next run)
 #   6 = docker build/up failed (retried on the next run via the pending-rebuild flag)
+#   7 = upstream rejected by the sanity gate (damaged or truncated file; nothing is changed,
+#       retried on the next run)
 
 set -u
 
@@ -26,6 +31,7 @@ SKIP_DOCKER=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ENV_FILE=""
+UPSTREAM_FILE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -33,6 +39,7 @@ while [ $# -gt 0 ]; do
         --skip-docker) SKIP_DOCKER=1 ;;
         --repo-root) REPO_ROOT="$2"; shift ;;
         --env-file) ENV_FILE="$2"; shift ;;
+        --upstream-file) UPSTREAM_FILE="$2"; shift ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
@@ -82,6 +89,64 @@ get_env() {
 # Strip a UTF-8 BOM and CR characters so CRLF/LF and BOM differences never register as changes.
 normalized() {
     sed '1s/^\xEF\xBB\xBF//' "$1" | tr -d '\r'
+}
+
+# Sanity gate: upstream is generated, and the generator sometimes emits a damaged or truncated
+# file. Prints the reason and returns 1 when the (normalized) upstream file must not be synced.
+#   $1 = normalized upstream file, $2 = local style guide (may not exist)
+gate_reason() {
+    local up="$1" local_file="$2" first toc n up_lines local_lines
+
+    first="$(grep -m 1 -v '^[[:space:]]*$' "$up" || true)"
+    case "$first" in
+        '# '*) ;;
+        *) echo "first line is not a level-1 heading"; return 1 ;;
+    esac
+
+    # Every numbered entry of the file's own table of contents must have its "## N." heading.
+    toc="$(awk '
+        /^## Table of contents[[:space:]]*$/ { t = 1; next }
+        t && (/^## / || /^---/) { exit }
+        t && /^[0-9]+\. / { sub(/\..*/, ""); print }
+    ' "$up")"
+    if [ -z "$toc" ]; then
+        log "Upstream has no table of contents; section check skipped." >&2
+    else
+        for n in $toc; do
+            if ! grep -q "^## ${n}\. " "$up"; then
+                echo "section $n is missing (file is truncated)"
+                return 1
+            fi
+        done
+    fi
+
+    # A fence opens on a line of 3+ backticks (info string allowed) and closes only on a line of
+    # backticks alone that is at least as long, so shorter fences nested inside are content.
+    if ! awk '
+        function ticks(s,    n) { sub(/^ */, "", s); n = 0; while (substr(s, n + 1, 1) == "`") n++; return n }
+        {
+            n = ticks($0)
+            if (n >= 3) {
+                rest = $0; sub(/^ *`+/, "", rest)
+                if (!fence) { if (index(rest, "`") == 0) fence = n }
+                else if (n >= fence && rest ~ /^[[:space:]]*$/) fence = 0
+            }
+        }
+        END { exit fence ? 1 : 0 }
+    ' "$up"; then
+        echo "ends inside an open code fence"
+        return 1
+    fi
+
+    if [ -f "$local_file" ]; then
+        up_lines="$(wc -l < "$up" | tr -d ' ')"
+        local_lines="$(normalized "$local_file" | wc -l | tr -d ' ')"
+        if [ $((up_lines * 100)) -lt $((local_lines * 60)) ]; then
+            echo "upstream has $up_lines lines, local has $local_lines (under 60%)"
+            return 1
+        fi
+    fi
+    return 0
 }
 
 # Runs docker compose build + up -d. Returns non-zero on failure (flag file left in place).
@@ -148,7 +213,7 @@ FILE_PATH="$(get_env STYLE_GUIDE_FILE_PATH)"; FILE_PATH="${FILE_PATH:-docsguidel
 BRANCH="$(get_env STYLE_GUIDE_BRANCH)";      BRANCH="${BRANCH:-main}"
 COMPOSE_PATH="$(get_env STYLE_GUIDE_COMPOSE_DIR)"
 
-if [ -z "$TOKEN" ]; then
+if [ -z "$TOKEN" ] && [ -z "$UPSTREAM_FILE" ]; then
     log "Config error: STYLE_GUIDE_GITHUB_TOKEN is not set in $ENV_FILE"
     exit 2
 fi
@@ -186,9 +251,16 @@ fi
 
 # --- Fetch upstream ---------------------------------------------------------------
 TMP_FILE="$(mktemp)"
-trap 'rm -f "$TMP_FILE"' EXIT
+NORM_FILE="$(mktemp)"
+trap 'rm -f "$TMP_FILE" "$NORM_FILE"' EXIT
 URL="https://api.github.com/repos/$OWNER/$REPO/contents/$FILE_PATH?ref=$BRANCH"
-if ! HTTP_CODE="$(curl -sS -o "$TMP_FILE" -w '%{http_code}' \
+if [ -n "$UPSTREAM_FILE" ]; then
+    if ! cp "$UPSTREAM_FILE" "$TMP_FILE"; then
+        log "Fetch failed: cannot read --upstream-file $UPSTREAM_FILE"
+        exit 3
+    fi
+    HTTP_CODE=200
+elif ! HTTP_CODE="$(curl -sS -o "$TMP_FILE" -w '%{http_code}' \
         -H "Authorization: Bearer $TOKEN" \
         -H 'Accept: application/vnd.github.raw+json' \
         -H 'User-Agent: docsWriter-style-guide-sync' \
@@ -200,6 +272,13 @@ fi
 if [ "$HTTP_CODE" != "200" ]; then
     log "Fetch failed for $OWNER/$REPO/$FILE_PATH@$BRANCH (HTTP $HTTP_CODE). Note: 404 can mean a wrong path/branch OR a token without access to the repo."
     exit 3
+fi
+
+# --- Sanity gate ------------------------------------------------------------------
+normalized "$TMP_FILE" > "$NORM_FILE"
+if ! REJECT_REASON="$(gate_reason "$NORM_FILE" "$TARGET_ABS")"; then
+    log "Upstream rejected: $REJECT_REASON"
+    exit 7
 fi
 
 # --- Compare (cheap gate; git decides authoritatively later) ------------------------
@@ -227,6 +306,7 @@ if ! out="$(git_r pull --ff-only 2>&1)"; then
 fi
 
 # Write LF, no BOM - matches how a Linux clone checks the file out
+mkdir -p "$(dirname "$TARGET_ABS")"
 normalized "$TMP_FILE" > "$TARGET_ABS"
 
 # Authoritative gate: git's own normalization decides whether a commit is needed
