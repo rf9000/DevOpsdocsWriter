@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { fixture, git, makeRepo, posix, readStatus, runSync, upstreamFile } from './helpers.ts';
+import { fixture, git, makeRepo, posix, readStatus, runSync, runSyncWithDocker, upstreamFile } from './helpers.ts';
 
 setDefaultTimeout(300_000);
 
@@ -319,5 +319,64 @@ describe('status file', () => {
 
     expect(res.code).toBe(0);
     expect(await readStatus(root)).toBeNull();
+  });
+});
+
+describe('container rebuild', () => {
+  const changed = `${good}\nExtra line.\n`;
+  /** A clone whose .env points compose at the clone's parent directory. */
+  async function setup(extraEnv = '') {
+    const { root } = await makeRepo(good);
+    await writeFile(join(root, '.env'), `STYLE_GUIDE_COMPOSE_DIR=${posix(join(root, '..'))}\n${extraEnv}`);
+    return root;
+  }
+  const withDocker = async (root: string, upstream: string, dockerExit = 0) =>
+    runSyncWithDocker(root, ['--upstream-file', await upstreamFile(root, upstream)], dockerExit);
+
+  test.concurrent('a sync rebuilds and restarts only the configured service', async () => {
+    const root = await setup('STYLE_GUIDE_COMPOSE_SERVICE=docs-writer\n');
+
+    const res = await withDocker(root, changed);
+
+    expect(res.code).toBe(0);
+    expect(res.docker).toEqual(['compose build docs-writer', 'compose up -d docs-writer']);
+    expect(await readStatus(root)).toMatchObject({ result: 'synced' });
+  });
+
+  test.concurrent('without a configured service the whole compose project is rebuilt', async () => {
+    const root = await setup();
+
+    const res = await withDocker(root, changed);
+
+    expect(res.code).toBe(0);
+    expect(res.docker).toEqual(['compose build', 'compose up -d']);
+    expect(res.out).toContain('every service');
+  });
+
+  test.concurrent('nothing is rebuilt when the guide is up to date or upstream is rejected', async () => {
+    const root = await setup('STYLE_GUIDE_COMPOSE_SERVICE=docs-writer\n');
+
+    expect((await withDocker(root, good)).docker).toEqual([]);
+    expect((await withDocker(root, `Chatter.\n\n${good}`)).docker).toEqual([]);
+  });
+
+  test.concurrent('a service name that is not a compose service name is a config error', async () => {
+    const root = await setup('STYLE_GUIDE_COMPOSE_SERVICE=docs-writer; rm -rf x\n');
+
+    const res = await withDocker(root, changed);
+
+    expect(res.code).toBe(2);
+    expect(res.docker).toEqual([]);
+    expect(String((await readStatus(root))?.reason)).toContain('STYLE_GUIDE_COMPOSE_SERVICE');
+  });
+
+  test.concurrent('a failed build is exit 6 and stops before the restart', async () => {
+    const root = await setup('STYLE_GUIDE_COMPOSE_SERVICE=docs-writer\n');
+
+    const res = await withDocker(root, changed, 1);
+
+    expect(res.code).toBe(6);
+    expect(res.docker).toEqual(['compose build docs-writer']);
+    expect(await readStatus(root)).toMatchObject({ result: 'failed', exitCode: 6, inSync: true });
   });
 });

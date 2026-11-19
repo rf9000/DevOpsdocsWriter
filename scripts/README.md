@@ -16,7 +16,8 @@ Linux VM and does, in order:
    gate, so CRLF/LF differences never cause churn commits).
 3. If different: run the **sanity gate** (below). A damaged upstream file stops the run here.
 4. Then `git pull --ff-only`, overwrite the file, commit **only that file** to `main`, push.
-5. `docker compose build` + `docker compose up -d` so the container runs with the new guide.
+5. `docker compose build` + `docker compose up -d` of `STYLE_GUIDE_COMPOSE_SERVICE`, so the
+   docs-writer container runs with the new guide.
 6. Write the **status file** (below), whatever the outcome.
 
 If nothing changed, it logs one line and exits. Logs go to `.state/style-guide-sync.log`.
@@ -80,12 +81,17 @@ bash scripts/sync-style-guide.sh --skip-docker # sync + push, no container rebui
 `--repo-root <path>`, `--env-file <path>` and `--upstream-file <path>` (use a local file as the
 fetched upstream; no network, no token) exist for testing against a throwaway clone.
 
-### Configuration (`.env` in the repo root)
+### Configuration (`.env` in the repo root, or the file given with `--env-file`)
+
+On the VM the keys live in `~/teams/continia-banking/.env.docs-writer`, the docs-writer
+container's env file, and every cron line passes `--env-file` with that path. The clone has no
+`.env` of its own there.
 
 | Key | Required | Default |
 |---|---|---|
 | `STYLE_GUIDE_GITHUB_TOKEN` | yes | — (fine-grained PAT, **Contents: read-only**, scoped to the style-guide repo) |
 | `STYLE_GUIDE_COMPOSE_DIR` | yes¹ | — (the directory containing `docker-compose.yml`, **or** the full path to the compose file itself) |
+| `STYLE_GUIDE_COMPOSE_SERVICE` | no, but set it | none. The compose service to rebuild and restart after a sync: `docs-writer`. **Without it the script rebuilds and restarts every service in the compose project**, also agents in the middle of a job |
 | `STYLE_GUIDE_STATUS_FILE` | no | `.state/style-guide-sync.status.json`. On the VM: `/home/azureuser/teams/continia-banking/monitor-requests/styleguide-sync.status.json` |
 | `STYLE_GUIDE_REQUEST_DIR` | no | the directory of `STYLE_GUIDE_STATUS_FILE` (used by `sync-style-guide-request.sh`) |
 | `STYLE_GUIDE_REPO_OWNER` | no | `Continia` |
@@ -132,15 +138,34 @@ crontab -e
 
 Add (adjust the repo path):
 
+These are the lines on the VM (installed 2026-11-19). Each is one line:
+
 ```cron
-@reboot sleep 360 && /bin/bash /home/azureuser/path/to/DevOpsdocsWriter/scripts/sync-style-guide.sh --trigger cron >> /home/azureuser/path/to/DevOpsdocsWriter/.state/cron-style-guide.log 2>&1
-0 6 * * * /bin/bash /home/azureuser/path/to/DevOpsdocsWriter/scripts/sync-style-guide.sh --trigger cron >> /home/azureuser/path/to/DevOpsdocsWriter/.state/cron-style-guide.log 2>&1
-* * * * * /bin/bash /home/azureuser/path/to/DevOpsdocsWriter/scripts/sync-style-guide-request.sh >> /home/azureuser/path/to/DevOpsdocsWriter/.state/cron-style-guide.log 2>&1
+@reboot sleep 360 && /bin/bash /home/azureuser/teams/continia-banking/DevOpsdocsWriter/scripts/sync-style-guide.sh --env-file /home/azureuser/teams/continia-banking/.env.docs-writer --trigger cron >> /home/azureuser/teams/continia-banking/DevOpsdocsWriter/.state/cron-style-guide.log 2>&1
+30 6 * * * /bin/bash /home/azureuser/teams/continia-banking/DevOpsdocsWriter/scripts/sync-style-guide.sh --env-file /home/azureuser/teams/continia-banking/.env.docs-writer --trigger cron >> /home/azureuser/teams/continia-banking/DevOpsdocsWriter/.state/cron-style-guide.log 2>&1
+* * * * * /bin/bash /home/azureuser/teams/continia-banking/DevOpsdocsWriter/scripts/sync-style-guide-request.sh --env-file /home/azureuser/teams/continia-banking/.env.docs-writer >> /home/azureuser/teams/continia-banking/DevOpsdocsWriter/.state/cron-style-guide.log 2>&1
+```
+
+Pasting such long lines into `crontab -e` over SSH can break them in two, and a broken line is
+not a cron entry. Adding them from the shell avoids that:
+
+```bash
+crontab -l > ~/crontab.backup
+D=/home/azureuser/teams/continia-banking
+S="$D/DevOpsdocsWriter/scripts"
+L="$D/DevOpsdocsWriter/.state/cron-style-guide.log"
+E="--env-file $D/.env.docs-writer"
+( crontab -l
+  echo "@reboot sleep 360 && /bin/bash $S/sync-style-guide.sh $E --trigger cron >> $L 2>&1"
+  echo "30 6 * * * /bin/bash $S/sync-style-guide.sh $E --trigger cron >> $L 2>&1"
+  echo "* * * * * /bin/bash $S/sync-style-guide-request.sh $E >> $L 2>&1"
+) | crontab -
 ```
 
 The `@reboot` line is the one that usually runs: Azure auto-shutdown deallocates the VM every
 afternoon, and it is often started after 06:00, so the fixed time is missed on most days. The
-6-minute sleep lets the network come up. The dashboard shows an amber line when no run has
+6-minute sleep lets the network come up. The fixed time is 06:30, not 06:00: `pull-repos.sh`
+runs at 06:00 and pulls the same clone. The dashboard shows an amber line when no run has
 reported for 48 hours, which is how a missing cron line shows up.
 
 The script logs itself to `.state/style-guide-sync.log`; the cron redirect only catches anything

@@ -73,13 +73,33 @@ export function runSync(root: string, args: string[]): Promise<{ code: number; o
   return run([BASH, posix(join(REPO, 'scripts', 'sync-style-guide.sh')), '--repo-root', posix(root), '--skip-docker', ...args]);
 }
 
+/**
+ * Runs the sync with docker enabled, against a stand-in `docker` that only records its arguments.
+ * Returns the recorded calls, one per line ("compose build docs-writer").
+ */
+export async function runSyncWithDocker(root: string, args: string[], dockerExit = 0): Promise<{ code: number; out: string; docker: string[] }> {
+  const bin = join(dirname(root), `fake-bin-${crypto.randomUUID()}`);
+  const calls = join(bin, 'calls.log');
+  await mkdir(bin);
+  await writeFile(join(bin, 'docker'), `#!/usr/bin/env bash\necho "$*" >> "${posix(calls)}"\nexit ${dockerExit}\n`, { mode: 0o755 });
+  // "cd && pwd" turns the directory into the shell's own path form, so it is safe inside PATH.
+  const res = await run([
+    BASH, '-c', 'PATH="$(cd "$1" && pwd):$PATH" exec bash "$2" "${@:3}"', '_',
+    posix(bin), posix(join(REPO, 'scripts', 'sync-style-guide.sh')), '--repo-root', posix(root), ...args,
+  ]);
+  const docker = existsSync(calls) ? (await readFile(calls, 'utf8')).split('\n').filter(Boolean) : [];
+  return { ...res, docker };
+}
+
 /** Runs any script under scripts/ with bash. */
 export function runScript(name: string, args: string[]): Promise<{ code: number; out: string }> {
   return run([BASH, posix(join(REPO, 'scripts', name)), ...args]);
 }
 
-export function fixture(name: string): Promise<string> {
-  return readFile(join(REPO, 'tests', 'fixtures', 'style-guide', name), 'utf8');
+// Read with LF line endings whatever the checkout did (autocrlf on Windows): the tests compare
+// against what the script writes, and it writes LF.
+export async function fixture(name: string): Promise<string> {
+  return (await readFile(join(REPO, 'tests', 'fixtures', 'style-guide', name), 'utf8')).replace(/\r\n/g, '\n');
 }
 
 /** Writes an upstream variant next to the clone and returns its path as a bash argument. */

@@ -2,7 +2,7 @@
 # Syncs .claude/skills/docs-writer/references/style-guide.md from its upstream GitHub repo.
 #
 # Daily flow (cron): fetch upstream -> compare -> overwrite -> git commit + push (main)
-# -> docker compose build + up -d. The local file is a verbatim copy of upstream by design
+# -> docker compose build + up -d of the docs-writer service (STYLE_GUIDE_COMPOSE_SERVICE). The local file is a verbatim copy of upstream by design
 # (local deltas live in style-guide-supplement.md).
 #
 # Config comes from the repo's .env (STYLE_GUIDE_* keys, see .env.example). See scripts/README.md
@@ -264,14 +264,18 @@ gate_reason() {
     return 0
 }
 
-# Runs docker compose build + up -d. Returns non-zero on failure (flag file left in place).
+# Runs docker compose build + up -d, for STYLE_GUIDE_COMPOSE_SERVICE only when it is set.
+# Returns non-zero on failure (flag file left in place).
 docker_rebuild() {
     local step out
     touch "$FLAG_FILE"
+    if [ -z "$COMPOSE_SERVICE" ]; then
+        log "STYLE_GUIDE_COMPOSE_SERVICE is not set: rebuilding and restarting every service of the compose project."
+    fi
     for step in build "up -d"; do
-        log "Running: docker compose $step in $COMPOSE_WORKDIR"
+        log "Running: docker compose $step${COMPOSE_SERVICE:+ $COMPOSE_SERVICE} in $COMPOSE_WORKDIR"
         # shellcheck disable=SC2086
-        if ! out="$(cd "$COMPOSE_WORKDIR" && docker compose ${COMPOSE_FILE_ARG} $step 2>&1)"; then
+        if ! out="$(cd "$COMPOSE_WORKDIR" && docker compose ${COMPOSE_FILE_ARG} $step $COMPOSE_SERVICE 2>&1)"; then
             log "docker compose $step failed. Last output:"
             printf '%s\n' "$out" | tail -n 15 | while IFS= read -r l; do log "  $l"; done
             return 1
@@ -338,12 +342,19 @@ REPO="$(get_env STYLE_GUIDE_REPO_NAME)";     REPO="${REPO:-Continia-agent-friend
 FILE_PATH="$(get_env STYLE_GUIDE_FILE_PATH)"; FILE_PATH="${FILE_PATH:-docsguidelines/llmfriendly/style-guide.md}"
 BRANCH="$(get_env STYLE_GUIDE_BRANCH)";      BRANCH="${BRANCH:-main}"
 COMPOSE_PATH="$(get_env STYLE_GUIDE_COMPOSE_DIR)"
+COMPOSE_SERVICE="$(get_env STYLE_GUIDE_COMPOSE_SERVICE)"
 
 if [ -z "$TOKEN" ] && [ -z "$UPSTREAM_FILE" ]; then
     finish 2 failed "Config error: STYLE_GUIDE_GITHUB_TOKEN is not set in $ENV_FILE"
 fi
 COMPOSE_WORKDIR=""
 COMPOSE_FILE_ARG=""
+# The name goes on a command line unquoted, so it must be a plain compose service name.
+case "$COMPOSE_SERVICE" in
+    *[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*)
+        finish 2 failed "Config error: STYLE_GUIDE_COMPOSE_SERVICE is not a compose service name: $COMPOSE_SERVICE"
+        ;;
+esac
 if [ "$SKIP_DOCKER" = 0 ] && [ "$DRY_RUN" = 0 ]; then
     if [ -z "$COMPOSE_PATH" ]; then
         finish 2 failed "Config error: STYLE_GUIDE_COMPOSE_DIR is not set in $ENV_FILE (or use --skip-docker)"
