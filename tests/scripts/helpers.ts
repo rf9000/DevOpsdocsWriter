@@ -13,10 +13,24 @@ const BASH = process.platform === 'win32' && existsSync(GIT_BASH) ? GIT_BASH : '
 /** Forward slashes, so a Windows path survives as a bash argument. */
 export const posix = (p: string) => p.replaceAll('\\', '/');
 
+// The tests run concurrently, and each spawns git and bash many times. Process start-up is slow
+// on Windows, so only a few run at once; the rest wait their turn.
+const MAX_PROCESSES = 4;
+let running = 0;
+const waiting: Array<() => void> = [];
+
 async function run(cmd: string[], cwd?: string): Promise<{ code: number; out: string }> {
-  const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
-  const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  return { code, out: stdout + stderr };
+  if (running >= MAX_PROCESSES) await new Promise<void>((go) => waiting.push(go));
+  else running++;
+  try {
+    const proc = Bun.spawn(cmd, { cwd, stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } });
+    const [stdout, stderr, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+    return { code, out: stdout + stderr };
+  } finally {
+    const next = waiting.shift();
+    if (next) next(); // hands the slot over
+    else running--;
+  }
 }
 
 /** Runs git in a repo and returns trimmed output; throws when git fails. */
@@ -73,4 +87,10 @@ export async function upstreamFile(root: string, content: string): Promise<strin
   const path = join(dirname(root), `upstream-${crypto.randomUUID()}.md`);
   await writeFile(path, content);
   return posix(path);
+}
+
+/** The status the sync wrote (default path), or null when there is none. */
+export async function readStatus(root: string, path = join(root, '.state', 'style-guide-sync.status.json')): Promise<Record<string, unknown> | null> {
+  if (!existsSync(path)) return null;
+  return JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>;
 }

@@ -9,8 +9,10 @@
 # for the cron entry, exit codes, and testing.
 #
 # Usage: sync-style-guide.sh [--dry-run] [--skip-docker] [--repo-root <path>] [--env-file <path>]
-#                            [--upstream-file <path>]
+#                            [--upstream-file <path>] [--trigger cron|dashboard|manual] [--by <who>]
 #
+# Every run (except --dry-run) writes a status file the monitor dashboard reads: see write_status.
+# --trigger and --by say what started the run; they only end up in that file.
 # --upstream-file uses a local file as the fetched upstream (no network, no token). For tests.
 #
 # Exit codes:
@@ -32,6 +34,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(dirname "$SCRIPT_DIR")"
 ENV_FILE=""
 UPSTREAM_FILE=""
+TRIGGER="manual"
+BY=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -40,11 +44,17 @@ while [ $# -gt 0 ]; do
         --repo-root) REPO_ROOT="$2"; shift ;;
         --env-file) ENV_FILE="$2"; shift ;;
         --upstream-file) UPSTREAM_FILE="$2"; shift ;;
+        --trigger) TRIGGER="$2"; shift ;;
+        --by) BY="$2"; shift ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
 done
 [ -n "$ENV_FILE" ] || ENV_FILE="$REPO_ROOT/.env"
+case "$TRIGGER" in
+    cron|dashboard|manual) ;;
+    *) echo "Unknown --trigger: $TRIGGER (expected cron, dashboard or manual)" >&2; exit 2 ;;
+esac
 
 TARGET_REL='.claude/skills/docs-writer/references/style-guide.md'
 TARGET_ABS="$REPO_ROOT/$TARGET_REL"
@@ -52,6 +62,12 @@ COMMIT_MARKER='chore: sync style guide'
 STATE_DIR="$REPO_ROOT/.state"
 LOG_FILE="$STATE_DIR/style-guide-sync.log"
 FLAG_FILE="$STATE_DIR/style-guide-rebuild-pending"
+# Overridden by STYLE_GUIDE_STATUS_FILE once the env file is read
+STATUS_FILE="$STATE_DIR/style-guide-sync.status.json"
+# true = local file equals upstream and is pushed; false = it is not; null = upstream never compared
+IN_SYNC=null
+UPSTREAM_COMMIT=""
+UPSTREAM_COMMIT_AT=""
 
 # Never hang on an interactive credential prompt under cron; fail fast (exit 5) instead.
 export GIT_TERMINAL_PROMPT=0
@@ -89,6 +105,70 @@ get_env() {
 # Strip a UTF-8 BOM and CR characters so CRLF/LF and BOM differences never register as changes.
 normalized() {
     sed '1s/^\xEF\xBB\xBF//' "$1" | tr -d '\r'
+}
+
+# Escapes a value for use inside a JSON string (control whitespace becomes a space).
+json_escape() {
+    printf '%s' "$1" | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+# Writes the status file the dashboard reads. Never fails the run: a missing or unwritable
+# directory is logged and ignored. The directory is not created (on the VM it is a shared one).
+#   $1 = exit code, $2 = synced | up-to-date | rejected | failed, $3 = reason (may be empty)
+write_status() {
+    local code="$1" result="$2" reason="$3" now last="" body dir tmp=""
+    [ "$DRY_RUN" = 1 ] && return 0
+    now="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    if [ "$result" = synced ]; then
+        last="$now"
+    elif [ -f "$STATUS_FILE" ]; then
+        last="$(grep -o '"lastSyncedAt"[[:space:]]*:[[:space:]]*"[0-9TZ:.+-]*"' "$STATUS_FILE" 2>/dev/null | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')"
+    fi
+
+    body="{\"at\":\"$now\",\"result\":\"$result\",\"exitCode\":$code"
+    if [ -n "$reason" ]; then body="$body,\"reason\":\"$(json_escape "$reason")\""; else body="$body,\"reason\":null"; fi
+    body="$body,\"inSync\":$IN_SYNC"
+    [ -n "$UPSTREAM_COMMIT" ] && body="$body,\"upstreamCommit\":\"$UPSTREAM_COMMIT\""
+    [ -n "$UPSTREAM_COMMIT_AT" ] && body="$body,\"upstreamCommitAt\":\"$UPSTREAM_COMMIT_AT\""
+    [ -n "$last" ] && body="$body,\"lastSyncedAt\":\"$last\""
+    body="$body,\"trigger\":\"$TRIGGER\""
+    [ -n "$BY" ] && body="$body,\"by\":\"$(json_escape "$BY")\""
+    body="$body}"
+
+    # Temp file + rename, so the dashboard never reads half a file. mktemp makes it 0600;
+    # the monitor container reads it as another user.
+    dir="$(dirname "$STATUS_FILE")"
+    if ! { tmp="$(mktemp "$dir/.style-guide-status.XXXXXX" 2>/dev/null)" \
+            && printf '%s\n' "$body" > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$STATUS_FILE"; }; then
+        [ -n "$tmp" ] && rm -f "$tmp"
+        log "Warning: could not write status to $STATUS_FILE"
+    fi
+    return 0
+}
+
+# Logs a message, writes the status file and exits. Every exit after argument parsing goes here.
+#   $1 = exit code, $2 = result, $3 = message (logged; also the status reason unless the run succeeded)
+finish() {
+    local code="$1" result="$2" message="${3:-}" reason=""
+    [ -n "$message" ] && log "$message"
+    [ "$code" != 0 ] && reason="$message"
+    write_status "$code" "$result" "$reason"
+    exit "$code"
+}
+
+# Looks up the newest upstream commit that touched the file, for the status file. Best effort.
+fetch_upstream_commit() {
+    local json
+    json="$(curl -sS --max-time 20 \
+        -H "Authorization: Bearer $TOKEN" \
+        -H 'Accept: application/vnd.github+json' \
+        -H 'User-Agent: docsWriter-style-guide-sync' \
+        -H 'X-GitHub-Api-Version: 2022-11-28' \
+        "https://api.github.com/repos/$OWNER/$REPO/commits?path=$FILE_PATH&sha=$BRANCH&per_page=1" 2>/dev/null)" || return 0
+    UPSTREAM_COMMIT="$(printf '%s' "$json" | grep -o '"sha"[[:space:]]*:[[:space:]]*"[0-9a-f]\{40\}"' | head -n 1 | grep -o '[0-9a-f]\{40\}' | cut -c 1-7)"
+    UPSTREAM_COMMIT_AT="$(printf '%s' "$json" | grep -o '"date"[[:space:]]*:[[:space:]]*"[0-9TZ:.+-]*"' | head -n 1 | sed 's/.*"\([^"]*\)"$/\1/')"
+    [ -n "$UPSTREAM_COMMIT" ] && log "Upstream commit: $UPSTREAM_COMMIT ($UPSTREAM_COMMIT_AT)"
+    return 0
 }
 
 # Sanity gate: upstream is generated, and the generator sometimes emits a damaged or truncated
@@ -181,8 +261,8 @@ self_heal() {
         else
             log "Unpushed sync commit found from a previous run; retrying push."
             if ! out="$(git_r push origin main 2>&1)"; then
-                log "Push retry failed: $out"
-                exit 5
+                IN_SYNC=false
+                finish 5 failed "git push retry failed: $out"
             fi
             log "Push retry succeeded."
             need_docker=1
@@ -193,7 +273,7 @@ self_heal() {
         if [ "$DRY_RUN" = 1 ] || [ "$SKIP_DOCKER" = 1 ]; then
             log "A docker rebuild is pending (skipped: dry-run/skip-docker)."
         else
-            docker_rebuild || exit 6
+            docker_rebuild || finish 6 failed "docker rebuild failed (see the log); it is retried on the next run."
         fi
     fi
 }
@@ -203,9 +283,10 @@ trim_log
 
 # --- Config -------------------------------------------------------------------
 if [ ! -f "$ENV_FILE" ]; then
-    log "Config error: env file not found at $ENV_FILE"
-    exit 2
+    finish 2 failed "Config error: env file not found at $ENV_FILE"
 fi
+STATUS_OVERRIDE="$(get_env STYLE_GUIDE_STATUS_FILE)"
+[ -n "$STATUS_OVERRIDE" ] && STATUS_FILE="$STATUS_OVERRIDE"
 TOKEN="$(get_env STYLE_GUIDE_GITHUB_TOKEN)"
 OWNER="$(get_env STYLE_GUIDE_REPO_OWNER)";   OWNER="${OWNER:-Continia}"
 REPO="$(get_env STYLE_GUIDE_REPO_NAME)";     REPO="${REPO:-Continia-agent-friendly-style-guidelines}"
@@ -214,15 +295,13 @@ BRANCH="$(get_env STYLE_GUIDE_BRANCH)";      BRANCH="${BRANCH:-main}"
 COMPOSE_PATH="$(get_env STYLE_GUIDE_COMPOSE_DIR)"
 
 if [ -z "$TOKEN" ] && [ -z "$UPSTREAM_FILE" ]; then
-    log "Config error: STYLE_GUIDE_GITHUB_TOKEN is not set in $ENV_FILE"
-    exit 2
+    finish 2 failed "Config error: STYLE_GUIDE_GITHUB_TOKEN is not set in $ENV_FILE"
 fi
 COMPOSE_WORKDIR=""
 COMPOSE_FILE_ARG=""
 if [ "$SKIP_DOCKER" = 0 ] && [ "$DRY_RUN" = 0 ]; then
     if [ -z "$COMPOSE_PATH" ]; then
-        log "Config error: STYLE_GUIDE_COMPOSE_DIR is not set in $ENV_FILE (or use --skip-docker)"
-        exit 2
+        finish 2 failed "Config error: STYLE_GUIDE_COMPOSE_DIR is not set in $ENV_FILE (or use --skip-docker)"
     elif [ -f "$COMPOSE_PATH" ]; then
         # A compose file path was given; run compose against that file from its directory
         COMPOSE_WORKDIR="$(dirname "$COMPOSE_PATH")"
@@ -230,23 +309,19 @@ if [ "$SKIP_DOCKER" = 0 ] && [ "$DRY_RUN" = 0 ]; then
     elif [ -d "$COMPOSE_PATH" ]; then
         COMPOSE_WORKDIR="$COMPOSE_PATH"
     else
-        log "Config error: STYLE_GUIDE_COMPOSE_DIR does not exist: $COMPOSE_PATH"
-        exit 2
+        finish 2 failed "Config error: STYLE_GUIDE_COMPOSE_DIR does not exist: $COMPOSE_PATH"
     fi
 fi
 
 # --- Git preflight --------------------------------------------------------------
 if ! branch="$(git_r rev-parse --abbrev-ref HEAD 2>&1)"; then
-    log "Git preflight failed: $branch"
-    exit 4
+    finish 4 failed "Git preflight failed: $branch"
 fi
 if [ "$branch" != "main" ]; then
-    log "Git preflight failed: clone is on branch '$branch', expected 'main'."
-    exit 4
+    finish 4 failed "Git preflight failed: clone is on branch '$branch', expected 'main'."
 fi
 if [ -n "$(git_r status --porcelain -- "$TARGET_REL")" ]; then
-    log "Git preflight failed: $TARGET_REL has uncommitted local changes; refusing to overwrite. Commit or discard them first."
-    exit 4
+    finish 4 failed "Git preflight failed: $TARGET_REL has uncommitted local changes; refusing to overwrite. Commit or discard them first."
 fi
 
 # --- Fetch upstream ---------------------------------------------------------------
@@ -256,37 +331,39 @@ trap 'rm -f "$TMP_FILE" "$NORM_FILE"' EXIT
 URL="https://api.github.com/repos/$OWNER/$REPO/contents/$FILE_PATH?ref=$BRANCH"
 if [ -n "$UPSTREAM_FILE" ]; then
     if ! cp "$UPSTREAM_FILE" "$TMP_FILE"; then
-        log "Fetch failed: cannot read --upstream-file $UPSTREAM_FILE"
-        exit 3
+        finish 3 failed "Fetch failed: cannot read --upstream-file $UPSTREAM_FILE"
     fi
     HTTP_CODE=200
-elif ! HTTP_CODE="$(curl -sS -o "$TMP_FILE" -w '%{http_code}' \
+elif ! HTTP_CODE="$(curl -sS --max-time 60 -o "$TMP_FILE" -w '%{http_code}' \
         -H "Authorization: Bearer $TOKEN" \
         -H 'Accept: application/vnd.github.raw+json' \
         -H 'User-Agent: docsWriter-style-guide-sync' \
         -H 'X-GitHub-Api-Version: 2022-11-28' \
         "$URL" 2>&1)"; then
-    log "Fetch failed for $OWNER/$REPO/$FILE_PATH@$BRANCH: $HTTP_CODE"
-    exit 3
+    finish 3 failed "Fetch failed for $OWNER/$REPO/$FILE_PATH@$BRANCH: $HTTP_CODE"
 fi
 if [ "$HTTP_CODE" != "200" ]; then
-    log "Fetch failed for $OWNER/$REPO/$FILE_PATH@$BRANCH (HTTP $HTTP_CODE). Note: 404 can mean a wrong path/branch OR a token without access to the repo."
-    exit 3
+    finish 3 failed "Fetch failed for $OWNER/$REPO/$FILE_PATH@$BRANCH (HTTP $HTTP_CODE). Note: 404 can mean a wrong path/branch OR a token without access to the repo."
 fi
+[ -n "$UPSTREAM_FILE" ] || fetch_upstream_commit
 
 # --- Sanity gate ------------------------------------------------------------------
 normalized "$TMP_FILE" > "$NORM_FILE"
 if ! REJECT_REASON="$(gate_reason "$NORM_FILE" "$TARGET_ABS")"; then
+    IN_SYNC=false
     log "Upstream rejected: $REJECT_REASON"
+    write_status 7 rejected "$REJECT_REASON"
     exit 7
 fi
 
 # --- Compare (cheap gate; git decides authoritatively later) ------------------------
 if [ -f "$TARGET_ABS" ] && cmp -s <(normalized "$TMP_FILE") <(normalized "$TARGET_ABS"); then
     log "Style guide is up to date with $OWNER/$REPO@$BRANCH."
+    IN_SYNC=true
     self_heal
-    exit 0
+    finish 0 up-to-date
 fi
+IN_SYNC=false
 
 UPSTREAM_LINES="$(normalized "$TMP_FILE" | wc -l | tr -d ' ')"
 LOCAL_LINES=0
@@ -296,13 +373,12 @@ log "Style guide differs from upstream (local $LOCAL_LINES lines, upstream $UPST
 if [ "$DRY_RUN" = 1 ]; then
     log "DryRun: would overwrite, commit, push, and rebuild. No changes made."
     self_heal
-    exit 0
+    finish 0 up-to-date
 fi
 
 # --- Update: pull first, then write ---------------------------------------------------
 if ! out="$(git_r pull --ff-only 2>&1)"; then
-    log "git pull --ff-only failed; clone needs attention: $out"
-    exit 4
+    finish 4 failed "git pull --ff-only failed; clone needs attention: $out"
 fi
 
 # Write LF, no BOM - matches how a Linux clone checks the file out
@@ -313,37 +389,34 @@ normalized "$TMP_FILE" > "$TARGET_ABS"
 # (empty here means the pull already delivered the change, or the diff was EOL/BOM-only)
 if [ -z "$(git_r status --porcelain -- "$TARGET_REL")" ]; then
     log "File written but git sees no change (pull already delivered it, or EOL-only difference). Nothing to commit."
+    IN_SYNC=true
     self_heal
-    exit 0
+    finish 0 up-to-date
 fi
 
 # --- Commit + push (pathspec-scoped so unrelated changes are never swept in) ----------
 if ! out="$(git_r add -- "$TARGET_REL" 2>&1)"; then
-    log "git add failed: $out"
-    exit 5
+    finish 5 failed "git add failed: $out"
 fi
 COMMIT_MESSAGE="$COMMIT_MARKER from upstream ($(date '+%Y-%m-%d'))"
 if ! out="$(git_r commit -m "$COMMIT_MESSAGE" -- "$TARGET_REL" 2>&1)"; then
-    log "git commit failed: $out"
-    exit 5
+    finish 5 failed "git commit failed: $out"
 fi
 log "Committed: $COMMIT_MESSAGE"
 if ! out="$(git_r push origin main 2>&1)"; then
-    log "git push failed (commit kept locally; push is retried on the next run): $out"
-    exit 5
+    finish 5 failed "git push failed (commit kept locally; push is retried on the next run): $out"
 fi
 log "Pushed to origin/main."
+IN_SYNC=true
 
 # --- Docker rebuild ---------------------------------------------------------------------
 if [ "$SKIP_DOCKER" = 1 ]; then
     log "SkipDocker: container not rebuilt; a rebuild-pending flag is set so the next full run does it."
     touch "$FLAG_FILE"
-    exit 0
+    finish 0 synced
 fi
 if ! docker_rebuild; then
-    log "Docker failed; the rebuild-pending flag stays and is retried on the next run."
-    exit 6
+    finish 6 failed "Docker failed; the rebuild-pending flag stays and is retried on the next run."
 fi
 
-log "Sync complete."
-exit 0
+finish 0 synced "Sync complete."

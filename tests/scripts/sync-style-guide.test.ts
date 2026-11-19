@@ -1,9 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { fixture, git, makeRepo, runSync, upstreamFile } from './helpers.ts';
+import { readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { fixture, git, makeRepo, posix, readStatus, runSync, upstreamFile } from './helpers.ts';
 
-setDefaultTimeout(60_000);
+setDefaultTimeout(300_000);
 
 const good = await fixture('good.md');
 const SYNC_SUBJECT = 'chore: sync style guide';
@@ -85,7 +86,7 @@ describe('sanity gate', () => {
     const { root, guidePath } = await makeRepo(good);
     const upstream = `${good}\nExtra line.\n`;
 
-    const res = await sync(root, `﻿${upstream.replaceAll('\n', '\r\n')}`);
+    const res = await sync(root, `${String.fromCharCode(0xfeff)}${upstream.replaceAll('\n', '\r\n')}`);
 
     expect(res.code).toBe(0);
     expect(await readFile(guidePath, 'utf8')).toBe(upstream);
@@ -100,5 +101,115 @@ describe('sanity gate', () => {
 
     expect(res.out).toContain('no table of contents');
     expect(res.code).toBe(0);
+  });
+});
+
+describe('status file', () => {
+  const ISO = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/;
+  const changed = `${good}\nExtra line.\n`;
+  const damaged = `Generator chatter.\n\n${good}`;
+
+  test.concurrent('a sync writes status synced', async () => {
+    const { root } = await makeRepo(good);
+
+    await sync(root, changed);
+
+    const status = await readStatus(root);
+    expect(status).toMatchObject({ result: 'synced', exitCode: 0, inSync: true, reason: null, trigger: 'manual' });
+    expect(status?.at).toMatch(ISO);
+    expect(status?.lastSyncedAt).toMatch(ISO);
+    expect(status).not.toHaveProperty('by');
+  });
+
+  test.concurrent('an up-to-date run writes up-to-date and keeps lastSyncedAt', async () => {
+    const { root } = await makeRepo(good);
+    const statusPath = join(root, '.state', 'style-guide-sync.status.json');
+    await sync(root, changed);
+    const first = await readStatus(root);
+    await writeFile(statusPath, JSON.stringify({ ...first, lastSyncedAt: '2026-01-02T03:04:05Z' }));
+
+    const res = await sync(root, changed);
+
+    expect(res.code).toBe(0);
+    expect(await readStatus(root)).toMatchObject({ result: 'up-to-date', exitCode: 0, inSync: true, reason: null, lastSyncedAt: '2026-01-02T03:04:05Z' });
+  });
+
+  test.concurrent('a rejection writes rejected with the reason and inSync false', async () => {
+    const { root } = await makeRepo(good);
+
+    await sync(root, damaged);
+
+    const status = await readStatus(root);
+    expect(status).toMatchObject({ result: 'rejected', exitCode: 7, inSync: false, reason: 'first line is not a level-1 heading' });
+    expect(status).not.toHaveProperty('lastSyncedAt');
+  });
+
+  test.concurrent('trigger and by are recorded, and by is JSON-escaped', async () => {
+    const { root } = await makeRepo(good);
+
+    await sync(root, good, ['--trigger', 'dashboard', '--by', 'a "b" \ c']);
+
+    expect(await readStatus(root)).toMatchObject({ trigger: 'dashboard', by: 'a "b" \ c' });
+  });
+
+  test.concurrent('an unknown trigger is a usage error', async () => {
+    const { root } = await makeRepo(good);
+
+    const res = await sync(root, good, ['--trigger', 'nonsense']);
+
+    expect(res.code).toBe(2);
+  });
+
+  test.concurrent('a push failure writes failed with exit code 5', async () => {
+    const { root } = await makeRepo(good);
+    await git(root, 'remote', 'set-url', '--push', 'origin', posix(join(root, 'no-such-remote.git')));
+
+    const res = await sync(root, changed);
+
+    expect(res.code).toBe(5);
+    const status = await readStatus(root);
+    expect(status).toMatchObject({ result: 'failed', exitCode: 5, inSync: false });
+    expect(String(status?.reason)).toContain('push');
+  });
+
+  test.concurrent('a wrong branch writes failed with exit code 4 and inSync null', async () => {
+    const { root } = await makeRepo(good);
+    await git(root, 'checkout', '-q', '-b', 'other');
+
+    const res = await sync(root, changed);
+
+    expect(res.code).toBe(4);
+    expect(await readStatus(root)).toMatchObject({ result: 'failed', exitCode: 4, inSync: null });
+  });
+
+  test.concurrent('an unwritable status path does not change the exit code', async () => {
+    const { root } = await makeRepo(good);
+    const missing = posix(join(root, 'missing-dir', 'sub', 'status.json'));
+    await writeFile(join(root, '.env'), `STYLE_GUIDE_STATUS_FILE=${missing}\n`);
+
+    const res = await sync(root, good);
+
+    expect(res.out).toContain('could not write status');
+    expect(res.code).toBe(0);
+  });
+
+  test.concurrent('the status path comes from STYLE_GUIDE_STATUS_FILE', async () => {
+    const { root } = await makeRepo(good);
+    const custom = posix(join(root, '..', 'custom-status.json'));
+    await writeFile(join(root, '.env'), `STYLE_GUIDE_STATUS_FILE=${custom}\n`);
+
+    await sync(root, good);
+
+    expect(await readStatus(root, custom)).toMatchObject({ result: 'up-to-date' });
+    expect(await readStatus(root)).toBeNull();
+  });
+
+  test.concurrent('--dry-run writes no status file', async () => {
+    const { root } = await makeRepo(good);
+
+    const res = await sync(root, changed, ['--dry-run']);
+
+    expect(res.code).toBe(0);
+    expect(await readStatus(root)).toBeNull();
   });
 });
