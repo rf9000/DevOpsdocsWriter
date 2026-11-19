@@ -107,9 +107,10 @@ normalized() {
     sed '1s/^\xEF\xBB\xBF//' "$1" | tr -d '\r'
 }
 
-# Escapes a value for use inside a JSON string (control whitespace becomes a space).
+# Escapes a value for use inside a JSON string. Control characters (git output can carry them)
+# become spaces, and the value is cut to 500 bytes: it is a line on a dashboard card.
 json_escape() {
-    printf '%s' "$1" | tr '\n\r\t' '   ' | sed 's/\\/\\\\/g; s/"/\\"/g'
+    printf '%s' "$1" | tr '\001-\037\177' ' ' | cut -c 1-500 | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 # Writes the status file the dashboard reads. Never fails the run: a missing or unwritable
@@ -175,7 +176,7 @@ fetch_upstream_commit() {
 # file. Prints the reason and returns 1 when the (normalized) upstream file must not be synced.
 #   $1 = normalized upstream file, $2 = local style guide (may not exist)
 gate_reason() {
-    local up="$1" local_file="$2" first toc n up_lines local_lines
+    local up="$1" local_file="$2" first toc n last up_lines local_lines
 
     first="$(grep -m 1 -v '^[[:space:]]*$' "$up" || true)"
     case "$first" in
@@ -184,39 +185,73 @@ gate_reason() {
     esac
 
     # Every numbered entry of the file's own table of contents must have its "## N." heading.
+    # Entries may be "1. [Title]" or "- [1. Title]". Prints the numbers, or one word when there
+    # is nothing to check: NONE (no table of contents), EMPTY (heading only), UNNUMBERED.
     toc="$(awk '
-        /^## Table of contents[[:space:]]*$/ { t = 1; next }
-        t && (/^## / || /^---/) { exit }
-        t && /^[0-9]+\. / { sub(/\..*/, ""); print }
-    ' "$up")"
-    if [ -z "$toc" ]; then
-        log "Upstream has no table of contents; section check skipped." >&2
-    else
-        for n in $toc; do
-            if ! grep -q "^## ${n}\. " "$up"; then
-                echo "section $n is missing (file is truncated)"
-                return 1
-            fi
-        done
-    fi
-
-    # A fence opens on a line of 3+ backticks (info string allowed) and closes only on a line of
-    # backticks alone that is at least as long, so shorter fences nested inside are content.
-    if ! awk '
-        function ticks(s,    n) { sub(/^ */, "", s); n = 0; while (substr(s, n + 1, 1) == "`") n++; return n }
-        {
-            n = ticks($0)
-            if (n >= 3) {
-                rest = $0; sub(/^ *`+/, "", rest)
-                if (!fence) { if (index(rest, "`") == 0) fence = n }
-                else if (n >= fence && rest ~ /^[[:space:]]*$/) fence = 0
+        tolower($0) ~ /^## table of contents[ \t]*$/ { t = 1; seen = 1; next }
+        t && (/^## / || /^---/) { t = 0 }
+        t && /[^ \t]/ {
+            entries++
+            if (match($0, /^[-*+ \t]*\[?[0-9]+\./)) {
+                s = substr($0, RSTART, RLENGTH); gsub(/[^0-9]/, "", s); print s; numbered++
             }
+        }
+        END {
+            if (!seen) print "NONE"
+            else if (!entries) print "EMPTY"
+            else if (!numbered) print "UNNUMBERED"
+        }
+    ' "$up")"
+    case "$toc" in
+        NONE) log "Upstream has no table of contents; section check skipped." >&2 ;;
+        UNNUMBERED) log "Upstream table of contents has no numbered entries; section check skipped." >&2 ;;
+        EMPTY) echo "table of contents is empty (file is truncated)"; return 1 ;;
+        *)
+            for n in $toc; do
+                if ! grep -q "^## ${n}\. " "$up"; then
+                    echo "section $n is missing (file is truncated)"
+                    return 1
+                fi
+            done
+            ;;
+    esac
+
+    # CommonMark fences: a fence opens on a line of 3+ backticks or tildes (indented at most 3
+    # spaces, info string allowed) and closes only on a line of the same character alone that is
+    # at least as long. Everything else inside is content: shorter fences, the other character.
+    if ! awk '
+        {
+            sp = 0; while (substr($0, sp + 1, 1) == " ") sp++
+            if (sp > 3) next
+            body = substr($0, sp + 1); c = substr(body, 1, 1)
+            if (c != "`" && c != "~") next
+            n = 0; while (substr(body, n + 1, 1) == c) n++
+            if (n < 3) next
+            rest = substr(body, n + 1)
+            if (!fence) { if (c == "~" || index(rest, "`") == 0) { fence = n; fc = c } }
+            else if (c == fc && n >= fence && rest ~ /^[ \t]*$/) fence = 0
         }
         END { exit fence ? 1 : 0 }
     ' "$up"; then
         echo "ends inside an open code fence"
         return 1
     fi
+
+    # How the file ends. The table of contents cannot see a cut inside the last section, so catch
+    # the two endings a cut-off file shows that a finished one does not: half a table row, and a
+    # heading with nothing under it. A cut in the middle of a sentence there is not detectable
+    # (a healthy upstream file has no trailing newline either, so that is no signal).
+    last="$(grep -v '^[[:space:]]*$' "$up" | tail -n 1)"
+    last="${last%"${last##*[![:space:]]}"}"
+    case "$last" in
+        '|'*)
+            case "$last" in
+                '|'*'|') ;;
+                *) echo "ends in the middle of a table row"; return 1 ;;
+            esac
+            ;;
+        '#'*) echo "ends with a heading"; return 1 ;;
+    esac
 
     if [ -f "$local_file" ]; then
         up_lines="$(wc -l < "$up" | tr -d ' ')"
@@ -280,6 +315,16 @@ self_heal() {
 
 mkdir -p "$STATE_DIR"
 trim_log
+
+# One sync at a time: the cron runs and a dashboard request can start in the same minute, and two
+# runs in one clone fail each other's git pull. The later run steps aside; the running one reports.
+if command -v flock >/dev/null 2>&1; then
+    exec 8>"$STATE_DIR/style-guide-sync.lock"
+    if ! flock -n 8; then
+        log "Another style-guide sync is running; this run is skipped."
+        exit 0
+    fi
+fi
 
 # --- Config -------------------------------------------------------------------
 if [ ! -f "$ENV_FILE" ]; then
@@ -347,23 +392,24 @@ if [ "$HTTP_CODE" != "200" ]; then
 fi
 [ -n "$UPSTREAM_FILE" ] || fetch_upstream_commit
 
-# --- Sanity gate ------------------------------------------------------------------
+# --- Compare (cheap check; git decides authoritatively later) ------------------------
+# Before the sanity gate: a local file that already equals upstream needs no judging. That is
+# also the way out when the gate wrongly refuses a healthy guide: copy it in by hand and commit.
 normalized "$TMP_FILE" > "$NORM_FILE"
-if ! REJECT_REASON="$(gate_reason "$NORM_FILE" "$TARGET_ABS")"; then
-    IN_SYNC=false
-    log "Upstream rejected: $REJECT_REASON"
-    write_status 7 rejected "$REJECT_REASON"
-    exit 7
-fi
-
-# --- Compare (cheap gate; git decides authoritatively later) ------------------------
-if [ -f "$TARGET_ABS" ] && cmp -s <(normalized "$TMP_FILE") <(normalized "$TARGET_ABS"); then
+if [ -f "$TARGET_ABS" ] && cmp -s "$NORM_FILE" <(normalized "$TARGET_ABS"); then
     log "Style guide is up to date with $OWNER/$REPO@$BRANCH."
     IN_SYNC=true
     self_heal
     finish 0 up-to-date
 fi
 IN_SYNC=false
+
+# --- Sanity gate ------------------------------------------------------------------
+if ! REJECT_REASON="$(gate_reason "$NORM_FILE" "$TARGET_ABS")"; then
+    log "Upstream rejected: $REJECT_REASON"
+    write_status 7 rejected "$REJECT_REASON"
+    exit 7
+fi
 
 UPSTREAM_LINES="$(normalized "$TMP_FILE" | wc -l | tr -d ' ')"
 LOCAL_LINES=0

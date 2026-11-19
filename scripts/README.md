@@ -12,10 +12,10 @@ The local file is a **verbatim copy** of upstream by design — local deltas liv
 Linux VM and does, in order:
 
 1. Fetch the upstream file (GitHub Contents API, token from `.env`).
-2. Run the **sanity gate** (below). A damaged upstream file stops the run here.
-3. Compare with the local copy (line-ending and BOM tolerant; `git status` is the authoritative
+2. Compare with the local copy (line-ending and BOM tolerant; `git status` is the authoritative
    gate, so CRLF/LF differences never cause churn commits).
-4. If different: `git pull --ff-only`, overwrite the file, commit **only that file** to `main`, push.
+3. If different: run the **sanity gate** (below). A damaged upstream file stops the run here.
+4. Then `git pull --ff-only`, overwrite the file, commit **only that file** to `main`, push.
 5. `docker compose build` + `docker compose up -d` so the container runs with the new guide.
 6. Write the **status file** (below), whatever the outcome.
 
@@ -31,11 +31,25 @@ rejects the upstream file, changes nothing, and exits 7 when any of these holds:
 |---|---|
 | The first non-empty line is not a level-1 heading (`# `) | `first line is not a level-1 heading` |
 | A numbered entry in the file's own table of contents has no `## N.` heading | `section N is missing (file is truncated)` |
-| The file ends inside an open code fence | `ends inside an open code fence` |
+| The table of contents has a heading and nothing under it | `table of contents is empty (file is truncated)` |
+| The file ends inside an open code fence (CommonMark rules, backtick and tilde fences) | `ends inside an open code fence` |
+| The last line is a table row without its closing `\|` | `ends in the middle of a table row` |
+| The last line is a heading | `ends with a heading` |
 | It has under 60% of the local file's lines | `upstream has U lines, local has L (under 60%)` |
 
-A file without a table of contents skips the second rule. With no local file there is no fourth
-rule. There is no override: fix the upstream file, and the next run syncs it.
+A file without a table of contents, or with one that has no numbered entries, skips the section
+rule (logged). With no local file there is no 60% rule.
+
+What the gate cannot see: a file cut off in the middle of a sentence inside its **last** section,
+when it keeps 60% of the lines. The upstream generator would have to end the file with a marker
+for that to be checkable.
+
+There is no override flag. The gate only judges a file that differs from the local copy, so when
+it wrongly refuses a healthy guide, copy that file over the local one by hand, commit and push:
+the next run then reports "up to date". Otherwise fix the upstream file, and the next run syncs it.
+
+Only one sync runs at a time (`flock` on `.state/style-guide-sync.lock`, when `flock` is
+installed). A run that starts while another is going logs one line, writes no status, and exits 0.
 
 ### Status file
 
@@ -49,7 +63,7 @@ script does not create the directory; when it cannot write, it logs a warning an
 | `at` | When the run ended (UTC) |
 | `result` | `synced`, `up-to-date`, `rejected` (gate) or `failed` |
 | `exitCode` | The script's exit code |
-| `reason` | Why it was rejected or failed; `null` otherwise |
+| `reason` | Why it was rejected or failed (at most 500 characters, control characters removed); `null` otherwise |
 | `inSync` | `true`: the local file equals upstream and is pushed. `false`: it does not. `null`: the run stopped before it could compare |
 | `upstreamCommit`, `upstreamCommitAt` | The newest upstream commit that touched the file. Left out when the lookup fails |
 | `lastSyncedAt` | When a run last synced; carried over from the previous status file |

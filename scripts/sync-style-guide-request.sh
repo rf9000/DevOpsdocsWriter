@@ -67,7 +67,11 @@ flock -n 9 || exit 0 # the previous request is still running
 rm -f "$RUNNING"
 [ -f "$REQUEST" ] || exit 0
 
-mv "$REQUEST" "$RUNNING"
+# Without the rename the request would stay and start a sync every minute.
+if ! mv -T "$REQUEST" "$RUNNING"; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S') Cannot rename $REQUEST to $RUNNING; no sync started." >&2
+    exit 2
+fi
 
 # The "by" string of {"at":"...","by":"..."}; empty when it is null, missing, or the file is not JSON.
 BY="$(tr -d '\n\r' < "$RUNNING" \

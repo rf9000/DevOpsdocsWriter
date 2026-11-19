@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, git, makeRepo, posix, readStatus, runSync, upstreamFile } from './helpers.ts';
 
@@ -92,6 +92,82 @@ describe('sanity gate', () => {
     expect(await readFile(guidePath, 'utf8')).toBe(upstream);
   });
 
+  test.concurrent('rejects upstream that ends in the middle of a table row', async () => {
+    const { root, guidePath } = await makeRepo(good);
+
+    const res = await sync(root, `${good}\n| Situation | Ru\n`);
+
+    expect(res.out).toContain('ends in the middle of a table row');
+    expect(res.code).toBe(7);
+    expect(await readFile(guidePath, 'utf8')).toBe(good);
+  });
+
+  test.concurrent('rejects upstream that ends with a heading', async () => {
+    const { root } = await makeRepo(good);
+
+    const res = await sync(root, `${good}\n### 3.1 Cross-references\n`);
+
+    expect(res.out).toContain('ends with a heading');
+    expect(res.code).toBe(7);
+  });
+
+  // The real upstream guide has no newline after its last line, so that alone must not reject it.
+  test.concurrent('accepts upstream without a trailing newline', async () => {
+    const { root } = await makeRepo(good);
+
+    const res = await sync(root, `${good}
+The last sentence has no newline after it.`);
+
+    expect(res.out).toContain('Pushed to origin/main');
+    expect(res.code).toBe(0);
+  });
+
+  test.concurrent('reads a table of contents with other casing and bulleted entries', async () => {
+    const { root } = await makeRepo(good);
+    const bulleted = good.replace('## Table of contents', '## Table of Contents').replace(/^(\d)\. \[/gm, '- [$1. ');
+    expect(bulleted).toContain('- [3. Links]');
+
+    const res = await sync(root, bulleted.slice(0, bulleted.indexOf('## 3. Links')));
+
+    expect(res.out).toContain('section 3 is missing');
+    expect(res.code).toBe(7);
+  });
+
+  test.concurrent('rejects upstream cut off right after the table of contents heading', async () => {
+    const { root } = await makeRepo(null);
+
+    const res = await sync(root, `${good.slice(0, good.indexOf('1. [Frontmatter]'))}`);
+
+    expect(res.out).toContain('table of contents is empty');
+    expect(res.code).toBe(7);
+  });
+
+  test.concurrent('accepts a closed tilde fence that holds a backtick fence line', async () => {
+    const { root } = await makeRepo(good);
+
+    const res = await sync(root, `${good}\n~~~\n\`\`\`\nshown, not opened\n~~~\n`);
+
+    expect(res.code).toBe(0);
+  });
+
+  test.concurrent('accepts a backtick line inside an indented code block', async () => {
+    const { root } = await makeRepo(good);
+
+    const res = await sync(root, `${good}\nIndented code:\n\n    \`\`\`\n\nDone.\n`);
+
+    expect(res.code).toBe(0);
+  });
+
+  test.concurrent('a guide that already equals upstream is in sync, whatever the gate thinks of it', async () => {
+    const odd = `Not a heading.\n\n${good}`;
+    const { root } = await makeRepo(odd);
+
+    const res = await sync(root, odd);
+
+    expect(res.out).toContain('up to date');
+    expect(res.code).toBe(0);
+  });
+
   test.concurrent('upstream without a table of contents skips the section rule', async () => {
     const { root } = await makeRepo(good);
     const noToc = good.replace(/## Table of contents[\s\S]*?(?=## 1\. )/, '');
@@ -147,9 +223,11 @@ describe('status file', () => {
   test.concurrent('trigger and by are recorded, and by is JSON-escaped', async () => {
     const { root } = await makeRepo(good);
 
-    await sync(root, good, ['--trigger', 'dashboard', '--by', 'a "b" \ c']);
+    const by = `a "b" ${String.fromCharCode(92)} c${String.fromCharCode(27)}d`; // quote, backslash, ESC
 
-    expect(await readStatus(root)).toMatchObject({ trigger: 'dashboard', by: 'a "b" \ c' });
+    await sync(root, good, ['--trigger', 'dashboard', '--by', by]);
+
+    expect(await readStatus(root)).toMatchObject({ trigger: 'dashboard', by: `a "b" ${String.fromCharCode(92)} c d` });
   });
 
   test.concurrent('an unknown trigger is a usage error', async () => {
@@ -202,6 +280,36 @@ describe('status file', () => {
 
     expect(await readStatus(root, custom)).toMatchObject({ result: 'up-to-date' });
     expect(await readStatus(root)).toBeNull();
+  });
+
+  test.concurrent('a long failure reason is cut to 500 characters', async () => {
+    const { root } = await makeRepo(good);
+
+    const res = await sync(root, changed, ['--env-file', `/nonexistent/${'x'.repeat(600)}`]);
+
+    expect(res.code).toBe(2);
+    const reason = String((await readStatus(root))?.reason);
+    expect(reason).toStartWith('Config error: env file not found');
+    expect(reason.length).toBe(500);
+  });
+
+  // flock is not in Git Bash on Windows; there the script runs without the lock.
+  test.skipIf(process.platform === 'win32')('a second sync is skipped while one is running', async () => {
+    const { root } = await makeRepo(good);
+    const lock = join(root, '.state', 'style-guide-sync.lock');
+    await mkdir(join(root, '.state'), { recursive: true });
+    const holder = Bun.spawn(['flock', lock, 'sleep', '30'], { stdout: 'ignore', stderr: 'ignore' });
+    await Bun.sleep(500);
+    try {
+      const res = await sync(root, changed);
+
+      expect(res.out).toContain('Another style-guide sync is running');
+      expect(res.code).toBe(0);
+      expect(await readStatus(root)).toBeNull();
+      expect(await git(root, 'log', '-1', '--pretty=%s')).toBe('initial');
+    } finally {
+      holder.kill();
+    }
   });
 
   test.concurrent('--dry-run writes no status file', async () => {

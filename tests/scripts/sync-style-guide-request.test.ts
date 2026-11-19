@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fixture, makeRepo, posix, readStatus, runScript, upstreamFile } from './helpers.ts';
 
@@ -102,6 +102,20 @@ describe.skipIf(process.platform === 'win32')('sync-style-guide-request.sh', () 
     expect(res.code).toBe(0);
     expect(existsSync(s.running)).toBe(false);
     expect(await s.status()).toMatchObject({ result: 'failed', exitCode: 4, trigger: 'dashboard' });
+  });
+
+  test.concurrent('a request that cannot be renamed is exit 2 and runs no sync', async () => {
+    const s = await setup();
+    await writeFile(s.request, JSON.stringify({ at: '2026-11-19T10:00:00Z', by: 'u' }));
+    await mkdir(s.running); // a directory in the way: mv moves the request into it instead of renaming
+    await writeFile(join(s.running, 'styleguide-sync.request.json'), 'older');
+    await chmod(s.running, 0o555);
+
+    const res = await runRequest(s.root);
+
+    await chmod(s.running, 0o755);
+    expect(res.code).toBe(2);
+    expect(await s.status()).toBeNull();
   });
 
   test.concurrent('a missing request directory is exit 2', async () => {
