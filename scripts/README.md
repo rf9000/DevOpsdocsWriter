@@ -90,7 +90,7 @@ container's env file, and every cron line passes `--env-file` with that path. Th
 | Key | Required | Default |
 |---|---|---|
 | `STYLE_GUIDE_GITHUB_TOKEN` | yes | — (fine-grained PAT, **Contents: read-only**, scoped to the style-guide repo) |
-| `STYLE_GUIDE_COMPOSE_DIR` | yes¹ | — (the directory containing `docker-compose.yml`, **or** the full path to the compose file itself) |
+| `STYLE_GUIDE_COMPOSE_DIR` | yes¹ | — (the directory containing `docker-compose.yml`. On the VM: `/home/azureuser/teams/continia-banking`. The full path to one compose file also works, but see ² ) |
 | `STYLE_GUIDE_COMPOSE_SERVICE` | no, but set it | none. The compose service to rebuild and restart after a sync: `docs-writer`. **Without it the script rebuilds and restarts every service in the compose project**, also agents in the middle of a job |
 | `STYLE_GUIDE_STATUS_FILE` | no | `.state/style-guide-sync.status.json`. On the VM: `/home/azureuser/teams/continia-banking/monitor-requests/styleguide-sync.status.json` |
 | `STYLE_GUIDE_REQUEST_DIR` | no | the directory of `STYLE_GUIDE_STATUS_FILE` (used by `sync-style-guide-request.sh`) |
@@ -100,6 +100,12 @@ container's env file, and every cron line passes `--env-file` with that path. Th
 | `STYLE_GUIDE_BRANCH` | no | `main` |
 
 ¹ not needed with `--dry-run` / `--skip-docker`.
+
+² With a file path the script runs `docker compose -f <file>`, which loads only that file and
+skips `docker-compose.override.yml`. On the VM the override file defines the `monitor-public`
+network, so a file path fails with `refers to undefined network monitor-public: invalid compose
+project` (exit 6). With the directory, compose finds its files the same way as when you run it by
+hand there.
 
 ### Exit codes and recovery
 
