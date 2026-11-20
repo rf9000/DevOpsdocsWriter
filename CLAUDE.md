@@ -15,9 +15,9 @@ docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-ge
 
 ## Pipeline (per tagged work item)
 
-1. `watcher.ts` polls `queryTaggedWorkItems(writeDocsTag)`.
+1. `watcher.ts` polls `queryTaggedWorkItems` for both trigger tags: `writeDocsTag`, and `writeDocsNewTag` (which also forces a new article). Items are processed once; the trigger tag(s) an item was found with are removed after success.
 2. `processor.ts` gathers context: `getWorkItem` (+relations) → `getWorkItemComments` → `parsePullRequestRefs` → `getPullRequestContext` (metadata + changed files + head commit) → `pr-snapshot.ts`: for a PR that is not merged (`active`), fetches every changed `.al` file at the head commit over REST into `OUTPUT_DIR/.pr-snapshots/workitem-<id>/` (removed in a `finally`). The AL repo holds merged code only, so the snapshot is the source of truth for those files. Non-optional: a snapshot failure fails the item (tag kept → retried).
-3. `classifier.ts` runs a read-only classifier agent (Read/Grep/Glob/LSP, cwd = the product's AL repo) that decides `newfeature`/`update`/`changelog` + the target article — and, for a product with more than one docs home, which home — returned as a structured `<<<CLASSIFICATION>>>` block. Non-optional: a classifier failure fails the item (tag kept → retried). The decision drives the drafting prompt, the deliverable filename, and a code-generated candidate-articles note in the work-item comment.
+3. `classifier.ts` runs a read-only classifier agent (Read/Grep/Glob/LSP, cwd = the product's AL repo) that decides `newfeature`/`update`/`changelog` + the target article — and, for a product with more than one docs home, which home — returned as a structured `<<<CLASSIFICATION>>>` block. Non-optional: a classifier failure fails the item (tag kept → retried). The decision drives the drafting prompt, the deliverable filename, and a code-generated candidate-articles note in the work-item comment. `force-new.ts` then applies the human override in code: when the work item carries the `writeDocsNewTag` tag or a comment containing `#new-article`, an `update`/`changelog` decision becomes `newfeature` (same docs home, the former target kept as first candidate, a note in the comment). docsWriter's own comments must never contain the literal marker.
 4. `skill-linker.ts` junctions `.claude/skills/*` into `{TARGET_REPO_PATH}/.claude/skills/` (removed in a `finally`).
 5. `generator.ts` runs the agent; it invokes `docs-article-generator`, auto-picks the next `<PREFIX>-###`, and writes the article to `OUTPUT_DIR`. Writes are fenced to `OUTPUT_DIR` via `canUseTool`.
 6. `processor.ts` uploads the article as an attachment, links it, comments, and the watcher removes the tag.
@@ -46,7 +46,7 @@ docsWriter watches Azure DevOps for work items tagged `write-docs`, then auto-ge
 
 - `src/config/` — Zod env validation
 - `src/sdk/` — Azure DevOps REST client (tags, comments, PRs, attachments)
-- `src/services/` — watcher, processor, classifier (classification-only agent), generator (agent runner), skill-linker, skill-loader
+- `src/services/` — watcher, processor, classifier (classification-only agent), force-new (forced-new-article override), generator (agent runner), skill-linker, skill-loader
 - `src/prompts/` — `write-docs.md` system prompt
 - `src/state/` — JSON persistence + daily cap
 - `src/utils/` — HTML→text helper

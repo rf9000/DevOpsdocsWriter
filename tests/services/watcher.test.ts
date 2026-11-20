@@ -41,7 +41,9 @@ describe('runPollCycle', () => {
 
   test('documents each tagged item and removes the tag', async () => {
     const deps = makeDeps({
-      queryTaggedWorkItems: mock(() => Promise.resolve([101, 102])),
+      queryTaggedWorkItems: mock((_c, tag: string) =>
+        Promise.resolve(tag === 'write-docs' ? [101, 102] : []),
+      ),
     });
     const result = await runPollCycle(mockConfig(), store, deps);
 
@@ -190,6 +192,120 @@ describe('runPollCycle', () => {
     const result = await runPollCycle(mockConfig(), store, deps);
     expect(result.errors).toBe(1);
     expect(result.documented).toBe(1);
+  });
+});
+
+describe('runPollCycle with the force-new tag', () => {
+  let dir: string;
+  let store: StateStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'watcher-force-'));
+    store = new StateStore(dir);
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** Items per trigger tag: 102 carries both. */
+  const byTag = (map: Record<string, number[]>) =>
+    mock((_c: unknown, tag: string) => Promise.resolve(map[tag] ?? []));
+  const bothTags = () => byTag({ 'write-docs': [101, 102], 'write-docs-new': [102, 103] });
+  const removals = (deps: WatcherDeps) =>
+    (deps.removeTagFromWorkItem as ReturnType<typeof mock>).mock.calls.map(
+      (c) => `${(c as unknown[])[1]}:${(c as unknown[])[2]}`,
+    );
+
+  test('polls both trigger tags and processes each item once', async () => {
+    const config = mockConfig();
+    const deps = makeDeps({ queryTaggedWorkItems: bothTags() });
+
+    const result = await runPollCycle(config, store, deps);
+
+    expect(deps.queryTaggedWorkItems).toHaveBeenCalledWith(config, 'write-docs');
+    expect(deps.queryTaggedWorkItems).toHaveBeenCalledWith(config, 'write-docs-new');
+    const processed = (deps.processDocsItem as ReturnType<typeof mock>).mock.calls.map(
+      (c) => (c as unknown[])[1],
+    );
+    expect(processed).toEqual([101, 102, 103]);
+    expect(result.documented).toBe(3);
+  });
+
+  test('removes every trigger tag an item carries after a successful run', async () => {
+    const deps = makeDeps({ queryTaggedWorkItems: bothTags() });
+
+    await runPollCycle(mockConfig(), store, deps);
+
+    expect(removals(deps).sort()).toEqual([
+      '101:write-docs',
+      '102:write-docs',
+      '102:write-docs-new',
+      '103:write-docs-new',
+    ]);
+    expect(deps.addTagToWorkItem).toHaveBeenCalledTimes(3);
+  });
+
+  test('a failure removing one trigger tag still attempts the other', async () => {
+    const removeTagFromWorkItem = mock((_c: unknown, _id: number, tag: string) =>
+      tag === 'write-docs' ? Promise.reject(new Error('boom')) : Promise.resolve(),
+    );
+    const deps = makeDeps({
+      queryTaggedWorkItems: byTag({ 'write-docs': [102], 'write-docs-new': [102] }),
+      removeTagFromWorkItem,
+    });
+
+    const result = await runPollCycle(mockConfig(), store, deps);
+
+    expect(result.documented).toBe(1);
+    expect(removals(deps).sort()).toEqual(['102:write-docs', '102:write-docs-new']);
+    expect(deps.addTagToWorkItem).toHaveBeenCalledTimes(1);
+  });
+
+  test('a failed force-tagged item keeps its tag and its failure record', async () => {
+    const deps = makeDeps({
+      queryTaggedWorkItems: byTag({ 'write-docs-new': [103] }),
+      processDocsItem: mock(() => Promise.resolve({ itemId: 103, documented: false, error: 'x' })),
+    });
+
+    await runPollCycle(mockConfig(), store, deps);
+    await runPollCycle(mockConfig(), store, deps);
+
+    expect(deps.removeTagFromWorkItem).toHaveBeenCalledTimes(0);
+    // Not pruned between polls: the item is still tagged, only with the force tag.
+    expect(store.getFailure(103)?.count).toBe(2);
+  });
+
+  test('a dry run removes no trigger tag', async () => {
+    const deps = makeDeps({ queryTaggedWorkItems: bothTags() });
+    await runPollCycle(mockConfig({ dryRun: true }), store, deps);
+    expect(deps.removeTagFromWorkItem).toHaveBeenCalledTimes(0);
+  });
+
+  test('the daily cap counts each item once', async () => {
+    const deps = makeDeps({ queryTaggedWorkItems: bothTags() });
+    const result = await runPollCycle(mockConfig({ maxDocsPerDay: 2 }), store, deps);
+    expect(result.documented).toBe(2);
+    expect(result.skipped).toBe(1);
+  });
+
+  test('the ledger line names who added the force-new tag', async () => {
+    const config = mockConfig();
+    const recordLedger = mock(() => {});
+    const deps = makeDeps({
+      queryTaggedWorkItems: byTag({ 'write-docs-new': [103] }),
+      getWorkItemUpdates: mock(() =>
+        Promise.resolve([
+          {
+            revisedBy: { uniqueName: 'Ann@X.com' },
+            fields: { 'System.Tags': { newValue: config.writeDocsNewTag } },
+          },
+        ]),
+      ),
+      recordLedger,
+    });
+
+    await runPollCycle(config, store, deps);
+
+    const line = (recordLedger.mock.calls[0] as unknown[])[1] as { triggeredBy?: string };
+    expect(line.triggeredBy).toBe('ann@x.com');
   });
 });
 

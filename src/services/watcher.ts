@@ -73,8 +73,21 @@ export async function runPollCycle(
   stateStore: StateStore,
   deps: WatcherDeps = defaultDeps,
 ): Promise<{ documented: number; skipped: number; errors: number }> {
-  log(`Polling for work items tagged "${config.writeDocsTag}"...`);
-  const itemIds = await deps.queryTaggedWorkItems(config, config.writeDocsTag);
+  // Two trigger tags: the ordinary one, and the one that also forces a new
+  // article (the processor reads that wish off the work item itself). An item
+  // may carry either or both; it is processed once, and loses the trigger
+  // tag(s) it was found with.
+  const triggerTags = [...new Set([config.writeDocsTag, config.writeDocsNewTag])];
+  log(`Polling for work items tagged ${triggerTags.map((t) => `"${t}"`).join(' or ')}...`);
+  const tagsByItem = new Map<number, string[]>();
+  for (const tag of triggerTags) {
+    for (const id of await deps.queryTaggedWorkItems(config, tag)) {
+      const found = tagsByItem.get(id);
+      if (found) found.push(tag);
+      else tagsByItem.set(id, [tag]);
+    }
+  }
+  const itemIds = [...tagsByItem.keys()];
   log(`Found ${itemIds.length} tagged work item(s)`);
 
   const now = deps.now ?? (() => new Date());
@@ -143,7 +156,7 @@ export async function runPollCycle(
       ? undefined
       : await lookupTriggeredBy(
           () => deps.getWorkItemUpdates(config, itemId),
-          [config.writeDocsTag],
+          triggerTags,
           (msg) => log(`#${itemId}: Warning — ${msg}`),
         );
 
@@ -156,13 +169,17 @@ export async function runPollCycle(
         recordLedger(itemId, 'completed', result, {}, triggeredBy);
         documented++;
 
-        // Remove the tag so the item is not picked up again (skipped in dry-run).
+        // Remove the trigger tag(s) so the item is not picked up again (skipped
+        // in dry-run). Each on its own: one failed removal must not keep the
+        // other tag on the item.
         if (!config.dryRun) {
-          try {
-            await deps.removeTagFromWorkItem(config, itemId, config.writeDocsTag);
-            log(`#${itemId}: Removed "${config.writeDocsTag}" tag`);
-          } catch (tagErr) {
-            log(`#${itemId}: Warning — failed to remove tag: ${tagErr}`);
+          for (const tag of tagsByItem.get(itemId) ?? []) {
+            try {
+              await deps.removeTagFromWorkItem(config, itemId, tag);
+              log(`#${itemId}: Removed "${tag}" tag`);
+            } catch (tagErr) {
+              log(`#${itemId}: Warning — failed to remove "${tag}" tag: ${tagErr}`);
+            }
           }
 
           // Mark the item as documented so it is visible in the ADO overview
@@ -252,6 +269,7 @@ export async function startWatcher(config: AppConfig): Promise<void> {
 
   log(`Starting docsWriter — polling every ${config.pollIntervalMinutes} minutes`);
   log(`Watching tag: "${config.writeDocsTag}"`);
+  log(`Watching tag: "${config.writeDocsNewTag}" (forces a new article)`);
   log(`Product field: ${config.productField}`);
   for (const [repoKey, repo] of Object.entries(config.targetRepoPaths)) {
     log(`Source repo [${repoKey}]: ${repo}`);

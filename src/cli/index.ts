@@ -17,7 +17,7 @@ Commands:
   run-once         Run a single poll cycle and exit
   test-item <id>   Generate docs for a single work item (dry-run, no ADO writes)
   classify-item <id>  Run only the classifier for a work item (prints the JSON decision)
-  debug-tags       List work items currently carrying the write-docs tag
+  debug-tags       List work items currently carrying a trigger tag (write-docs / write-docs-new)
   reset-state      Clear the processed-item state and exit
   help             Show this help message
 
@@ -32,6 +32,8 @@ Environment variables (see .env.example):
   PRODUCT_FIELD                  Work item field that identifies the product
                                  (default: System.AreaPath)
   WRITE_DOCS_TAG                 Tag that triggers documentation (default: write-docs)
+  WRITE_DOCS_NEW_TAG             Tag that triggers documentation and forces a new article
+                                 (default: write-docs-new)
   OUTPUT_DIR                     Where the article is written (default: .output)
   SKILLS_SOURCE_DIR              docsWriter's skills (default: .claude/skills)
   POLL_INTERVAL_MINUTES          Polling interval (default: 15)
@@ -104,8 +106,10 @@ switch (command) {
 
   case 'debug-tags': {
     const config = loadConfig();
-    const ids = await queryTaggedWorkItems(config, config.writeDocsTag);
-    console.log(`Work items tagged "${config.writeDocsTag}": ${ids.length === 0 ? '(none)' : ids.join(', ')}`);
+    for (const tag of new Set([config.writeDocsTag, config.writeDocsNewTag])) {
+      const ids = await queryTaggedWorkItems(config, tag);
+      console.log(`Work items tagged "${tag}": ${ids.length === 0 ? '(none)' : ids.join(', ')}`);
+    }
     break;
   }
 

@@ -41,9 +41,18 @@ State (processed ids + a daily cap) is persisted as JSON to avoid runaway genera
    bun run start
    ```
 
+## Forcing a new article
+
+docsWriter decides for itself whether a change becomes a new article, an update to an existing article, or a changelog entry. To get a separate article regardless of that decision, use either of these on the work item:
+
+- **Tag `write-docs-new`** instead of (or as well as) `write-docs`. It triggers the run and forces a new article. The tag is removed after a successful run, so it applies once.
+- **A comment containing `#new-article`**, then tag the item `write-docs` as usual. The comment keeps applying on every later run of that work item; delete or edit the comment to undo it.
+
+The article is written to the docs home the classifier picked. The confirmation comment states that the new article was forced and what docsWriter would otherwise have done (for example, which article it would have updated), and that article is listed under the possible existing homes.
+
 ## Configuration
 
-See `.env.example`. Required: `AZURE_DEVOPS_PAT`/`ORG`/`PROJECT`, `TARGET_REPO_PATH` (AL source repo), `DOCS_REPO_PATH` (continia.docs.articles). Optional: `WRITE_DOCS_TAG` (default `write-docs`), `OUTPUT_DIR`, `SKILLS_SOURCE_DIR`, `POLL_INTERVAL_MINUTES`, `MAX_DOCS_PER_DAY`, `CLAUDE_MODEL`, `PROMPT_PATH`, `STATE_DIR`, `COST_LOG_PATH` (default `<STATE_DIR>/cost-ledger.jsonl`).
+See `.env.example`. Required: `AZURE_DEVOPS_PAT`/`ORG`/`PROJECT`, `TARGET_REPO_PATH` (AL source repo), `DOCS_REPO_PATH` (continia.docs.articles). Optional: `WRITE_DOCS_TAG` (default `write-docs`), `WRITE_DOCS_NEW_TAG` (default `write-docs-new`), `OUTPUT_DIR`, `SKILLS_SOURCE_DIR`, `POLL_INTERVAL_MINUTES`, `MAX_DOCS_PER_DAY`, `CLAUDE_MODEL`, `PROMPT_PATH`, `STATE_DIR`, `COST_LOG_PATH` (default `<STATE_DIR>/cost-ledger.jsonl`).
 
 **Style-guide sync:** `.claude/skills/docs-writer/references/style-guide.md` is a verbatim copy of an upstream GitHub file. A daily host-side job keeps it in sync and rebuilds the container on change. A damaged or truncated upstream file is rejected, not synced. Every run writes a status file that the monitor dashboard shows on the docs-writer card, and the card's "Sync now" button starts a run — see [scripts/README.md](scripts/README.md).
 
@@ -78,7 +87,7 @@ tests/                           # Mirror of src/ with full coverage
 | `bun run once` | Run a single poll cycle and exit |
 | `bun src/cli/index.ts classify-item <id>` | Run only the classifier for one item (prints the JSON decision) |
 | `bun src/cli/index.ts test-item <id>` | Generate docs for one item (dry-run) |
-| `bun src/cli/index.ts debug-tags` | List items carrying the `write-docs` tag |
+| `bun src/cli/index.ts debug-tags` | List items carrying the `write-docs` or `write-docs-new` tag |
 | `bun src/cli/index.ts reset-state` | Clear processed state |
 | `bun test` | Run all tests |
 | `bun run typecheck` | TypeScript type checking |
