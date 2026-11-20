@@ -29,6 +29,8 @@ export interface AppConfig {
   writeDocsTag: string;
   /** Tag added once an article has been attached, so documented items are visible in ADO. */
   docsWrittenTag: string;
+  /** Tag that marks a work item for documentation AND forces a new article, whatever the classifier decides. */
+  writeDocsNewTag: string;
   pollIntervalMinutes: number;
   maxDocsPerDay: number;
   claudeModel: string;

@@ -4,6 +4,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { AppConfig, OutputKind, PrContext } from '../types/index.ts';
 import type { DocsHome } from '../config/products.ts';
 import { hasSnapshot, renderSnapshotLines } from './pr-snapshot.ts';
+import type { ForcedNew } from './force-new.ts';
 
 /** One of a product's docs homes, located on disk. */
 export type ResolvedHome = DocsHome & {
@@ -50,6 +51,12 @@ export interface DocsClassification {
   candidates: ClassificationCandidate[];
   /** Short justification, logged for diagnosis. */
   reasoning: string;
+  /**
+   * Set by the processor (never by the classifier agent) when the user forced a
+   * new article and that changed the decision: records what the classifier had
+   * decided.
+   */
+  forced?: ForcedNew;
 }
 
 /**

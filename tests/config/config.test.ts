@@ -26,6 +26,7 @@ describe('loadConfig', () => {
     const cfg = loadConfig(baseEnv());
     expect(cfg.writeDocsTag).toBe('write-docs');
     expect(cfg.docsWrittenTag).toBe('Docs-Article-Written');
+    expect(cfg.writeDocsNewTag).toBe('write-docs-new');
     expect(cfg.outputDir).toBe('.output');
     expect(cfg.skillsSourceDir).toBe('.claude/skills');
     expect(cfg.pollIntervalMinutes).toBe(15);
@@ -104,5 +105,10 @@ describe('loadConfig', () => {
     );
     expect(cfg.writeDocsTag).toBe('doc-it');
     expect(cfg.outputDir).toBe('out');
+  });
+
+  test('honours an override for the force-new tag', () => {
+    const cfg = loadConfig(baseEnv({ WRITE_DOCS_NEW_TAG: 'doc-it-new' }));
+    expect(cfg.writeDocsNewTag).toBe('doc-it-new');
   });
 });
