@@ -12,6 +12,7 @@ import {
   uploadAttachment,
   linkAttachmentToWorkItem,
   addTagToWorkItem,
+  removeTagFromWorkItem,
 } from '../../src/sdk/azure-devops-client.ts';
 import type { WorkItemResponse } from '../../src/types/index.ts';
 import { mockConfig } from '../helpers.ts';
@@ -128,6 +129,31 @@ describe('queryTaggedWorkItems', () => {
   test('returns empty when nothing matches WIQL', async () => {
     setMockFetch({ workItems: [] });
     expect(await queryTaggedWorkItems(mockConfig(), 'write-docs')).toEqual([]);
+  });
+});
+
+describe('removeTagFromWorkItem', () => {
+  test('removes the tag case-insensitively, preserving the others', async () => {
+    setSequentialMockFetch(
+      { body: { id: 7, fields: { 'System.Tags': 'Write-Docs; other' } } },
+      { body: { id: 7, fields: {} } },
+    );
+
+    await removeTagFromWorkItem(mockConfig(), 7, 'write-docs');
+
+    expect(mockFn).toHaveBeenCalledTimes(2);
+    const patch = mockFn.mock.calls[1]!;
+    expect(JSON.parse((patch[1] as RequestInit).body as string)).toEqual([
+      { op: 'replace', path: '/fields/System.Tags', value: 'other' },
+    ]);
+  });
+
+  test('leaves the work item untouched when the tag is not on it', async () => {
+    setSequentialMockFetch({ body: { id: 7, fields: { 'System.Tags': 'write-docs; other' } } });
+
+    await removeTagFromWorkItem(mockConfig(), 7, 'write-docs-new');
+
+    expect(mockFn).toHaveBeenCalledTimes(1); // only the read, no PATCH
   });
 });
 

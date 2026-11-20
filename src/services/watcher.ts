@@ -75,19 +75,14 @@ export async function runPollCycle(
 ): Promise<{ documented: number; skipped: number; errors: number }> {
   // Two trigger tags: the ordinary one, and the one that also forces a new
   // article (the processor reads that wish off the work item itself). An item
-  // may carry either or both; it is processed once, and loses the trigger
-  // tag(s) it was found with.
-  const triggerTags = [...new Set([config.writeDocsTag, config.writeDocsNewTag])];
+  // may carry either or both; it is processed once.
+  const triggerTags = [config.writeDocsTag, config.writeDocsNewTag];
   log(`Polling for work items tagged ${triggerTags.map((t) => `"${t}"`).join(' or ')}...`);
-  const tagsByItem = new Map<number, string[]>();
+  const found = new Set<number>();
   for (const tag of triggerTags) {
-    for (const id of await deps.queryTaggedWorkItems(config, tag)) {
-      const found = tagsByItem.get(id);
-      if (found) found.push(tag);
-      else tagsByItem.set(id, [tag]);
-    }
+    for (const id of await deps.queryTaggedWorkItems(config, tag)) found.add(id);
   }
-  const itemIds = [...tagsByItem.keys()];
+  const itemIds = [...found];
   log(`Found ${itemIds.length} tagged work item(s)`);
 
   const now = deps.now ?? (() => new Date());
@@ -169,11 +164,14 @@ export async function runPollCycle(
         recordLedger(itemId, 'completed', result, {}, triggeredBy);
         documented++;
 
-        // Remove the trigger tag(s) so the item is not picked up again (skipped
-        // in dry-run). Each on its own: one failed removal must not keep the
-        // other tag on the item.
+        // Remove BOTH trigger tags so the item is not picked up again (skipped
+        // in dry-run) — not just the one it was found with: the processor reads
+        // the tags fresh, so a tag added after this poll may already have been
+        // honoured, and leaving it would run the item a second time. Removing
+        // an absent tag is a no-op. Each on its own: one failed removal must
+        // not keep the other tag on the item.
         if (!config.dryRun) {
-          for (const tag of tagsByItem.get(itemId) ?? []) {
+          for (const tag of triggerTags) {
             try {
               await deps.removeTagFromWorkItem(config, itemId, tag);
               log(`#${itemId}: Removed "${tag}" tag`);

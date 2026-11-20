@@ -38,6 +38,16 @@ export function detectForceNew(
 }
 
 /**
+ * Take the force out of any marker in text docsWriter is about to post (drops
+ * the `#`). The agents see the user's comments and may quote them; an echoed
+ * marker in docsWriter's own comment would keep forcing the item after the
+ * user deleted theirs.
+ */
+export function neutralizeMarker(text: string): string {
+  return text.replace(new RegExp(MARKER_RE.source, 'gi'), (match) => match.slice(1));
+}
+
+/**
  * Turn the classifier's decision into a new article when the user forced one.
  * The classifier still ran, so its findings are kept: the docs home stays (for
  * an update, the home of the article it would have updated) and that article

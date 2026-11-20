@@ -48,7 +48,8 @@ describe('runPollCycle', () => {
     const result = await runPollCycle(mockConfig(), store, deps);
 
     expect(result.documented).toBe(2);
-    expect(deps.removeTagFromWorkItem).toHaveBeenCalledTimes(2);
+    // Both trigger tags are removed from each item (removing an absent tag is a no-op).
+    expect(deps.removeTagFromWorkItem).toHaveBeenCalledTimes(4);
     expect(store.isProcessed(101)).toBe(true);
     expect(store.isProcessed(102)).toBe(true);
   });
@@ -229,15 +230,19 @@ describe('runPollCycle with the force-new tag', () => {
     expect(result.documented).toBe(3);
   });
 
-  test('removes every trigger tag an item carries after a successful run', async () => {
+  test('removes both trigger tags after a successful run, whichever the item was found with', async () => {
     const deps = makeDeps({ queryTaggedWorkItems: bothTags() });
 
     await runPollCycle(mockConfig(), store, deps);
 
+    // A trigger tag added after the poll (the processor reads tags fresh, so
+    // the run may already have honoured it) must not survive to cause a rerun.
     expect(removals(deps).sort()).toEqual([
       '101:write-docs',
+      '101:write-docs-new',
       '102:write-docs',
       '102:write-docs-new',
+      '103:write-docs',
       '103:write-docs-new',
     ]);
     expect(deps.addTagToWorkItem).toHaveBeenCalledTimes(3);

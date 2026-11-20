@@ -38,6 +38,23 @@ export function loadConfig(
 
   const parsed = result.data;
 
+  // Both tags are trigger tags the watcher queries for. An empty one would
+  // query for every work item; equal ones would force a new article on every
+  // run.
+  if (parsed.WRITE_DOCS_NEW_TAG.trim() === "") {
+    throw new Error(
+      "Invalid configuration:\n  - WRITE_DOCS_NEW_TAG: must not be empty (omit it to use the default, write-docs-new).",
+    );
+  }
+  if (
+    parsed.WRITE_DOCS_NEW_TAG.trim().toLowerCase() ===
+    parsed.WRITE_DOCS_TAG.trim().toLowerCase()
+  ) {
+    throw new Error(
+      "Invalid configuration:\n  - WRITE_DOCS_NEW_TAG must differ from WRITE_DOCS_TAG: it forces a new article, so sharing the tag would force one on every run.",
+    );
+  }
+
   // Per-product AL source repos: TARGET_REPO_PATH_<PREFIX> (e.g. TARGET_REPO_PATH_CB,
   // TARGET_REPO_PATH_DC). The legacy single TARGET_REPO_PATH maps to CB (Continia
   // Banking, the original product) when TARGET_REPO_PATH_CB is not set explicitly.

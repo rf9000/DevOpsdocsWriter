@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'bun:test';
-import { detectForceNew, applyForceNew, forcedNote } from '../../src/services/force-new.ts';
+import { detectForceNew, applyForceNew, forcedNote, neutralizeMarker } from '../../src/services/force-new.ts';
 import type { DocsClassification } from '../../src/services/classifier.ts';
 
 const TAG = 'write-docs-new';
@@ -131,6 +131,22 @@ describe('applyForceNew', () => {
     const snapshot = structuredClone(input);
     applyForceNew(input, 'comment');
     expect(input).toEqual(snapshot);
+  });
+});
+
+describe('neutralizeMarker', () => {
+  test('drops the # from every marker, keeping the rest of the text', () => {
+    expect(neutralizeMarker('Asked for #new-article, again: #New-Article.')).toBe(
+      'Asked for new-article, again: New-Article.',
+    );
+  });
+
+  test('the result no longer forces', () => {
+    expect(detectForceNew([neutralizeMarker('please #new-article')], '', TAG)).toBeUndefined();
+  });
+
+  test('leaves other hashtags and text alone', () => {
+    expect(neutralizeMarker('See #new-article-ideas and #123')).toBe('See #new-article-ideas and #123');
   });
 });
 

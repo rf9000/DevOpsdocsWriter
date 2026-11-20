@@ -20,6 +20,8 @@ import type { ProcessorDeps } from '../../src/services/processor.ts';
 import type { DocsContext } from '../../src/services/generator.ts';
 import type { ClassifierContext, ResolvedHome } from '../../src/services/classifier.ts';
 import { mockConfig, mockWorkItem } from '../helpers.ts';
+import { detectForceNew } from '../../src/services/force-new.ts';
+import { stripHtmlToText } from '../../src/utils/html.ts';
 
 let outDir: string;
 let docsDir: string;
@@ -1258,6 +1260,58 @@ describe('forcing a new article', () => {
     expect(comment).toContain('New article forced');
     expect(comment).toContain('a work-item comment');
     expect(comment).not.toContain('#new-article');
+  });
+
+  test('marker text quoted by the agents is neutralised before it reaches the work item', async () => {
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      classifyDocs: mock(() =>
+        Promise.resolve({
+          kind: 'update' as const,
+          docsFolder: 'continia-banking',
+          idPrefix: 'CB',
+          target: 'CB-161',
+          candidates: [
+            { id: 'CB-200', file: 'a.md', docsFolder: 'continia-banking', reason: 'User asked for #new-article' },
+          ],
+          reasoning: 'r',
+        }),
+      ),
+      getWorkItemComments: markerComment(),
+      generateDocs: mock((_cfg: AppConfig, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, '# Article\n');
+        return Promise.resolve(
+          '<<<WORKITEM-COMMENT>>>\nWritten as requested ("Own article please #New-Article").\n<<<END-WORKITEM-COMMENT>>>',
+        );
+      }),
+      addWorkItemComment,
+    });
+
+    await processDocsItem(cfg(), 42, deps);
+
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('Written as requested');
+    expect(comment).toContain('CB-200');
+    expect(comment.toLowerCase()).not.toContain('#new-article');
+    // What docsWriter posted must not force the next run once the user's comment is gone.
+    expect(detectForceNew([stripHtmlToText(comment)], '', 'write-docs-new')).toBeUndefined();
+  });
+
+  test('a dry run writes the forced note, marker-free, to the summary file', async () => {
+    const deps = makeDeps({
+      classifyDocs: updateDecision(),
+      getWorkItemComments: markerComment(),
+      generateDocs: mock((_cfg: AppConfig, ctx: DocsContext) => {
+        writeFileSync(ctx.outputPath, '# Article\n');
+        return Promise.resolve('Quoting the request: #new-article');
+      }),
+    });
+
+    const result = await processDocsItem(cfg({ dryRun: true }), 42, deps);
+
+    const summary = readFileSync(result.summaryPath!, 'utf-8');
+    expect(summary).toContain('New article forced');
+    expect(summary).not.toContain('#new-article');
   });
 
   test('force requested but the classifier already chose a new article: no note', async () => {

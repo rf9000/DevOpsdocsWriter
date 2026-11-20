@@ -17,7 +17,7 @@ import * as sdk from '../sdk/azure-devops-client.ts';
 import * as gen from './generator.ts';
 import * as linker from './skill-linker.ts';
 import * as classifier from './classifier.ts';
-import { applyForceNew, detectForceNew, forcedNote } from './force-new.ts';
+import { applyForceNew, detectForceNew, forcedNote, neutralizeMarker } from './force-new.ts';
 import type { ForceNewSource } from './force-new.ts';
 import * as snapshots from './pr-snapshot.ts';
 import type { ClassifierContext, DocsClassification, ResolvedHome } from './classifier.ts';
@@ -711,11 +711,15 @@ async function runDocsItem(
     // In the message-recovery path the whole message is the deliverable, so
     // extractCommentBody would post the entire note as the comment. Synthesize a
     // short note there instead; otherwise extract the agent's comment block.
-    const commentBody =
+    // Agent-written parts (the comment block, candidate reasons) may quote a
+    // user's marker comment; neutralise it so docsWriter's own comment can
+    // never force a later run.
+    const commentBody = neutralizeMarker(
       (recoveredFromMessage ? recoveryComment(classification.kind) : extractCommentBody(summary)) +
-      forcedNote(classification, config.writeDocsNewTag) +
-      candidateNote(classification) +
-      targetHomeNote(classification, home, mismatchedHome);
+        forcedNote(classification, config.writeDocsNewTag) +
+        candidateNote(classification) +
+        targetHomeNote(classification, home, mismatchedHome),
+    );
 
     if (config.dryRun) {
       const summaryPath = join(outputDir, `workitem-${itemId}-summary.md`);

@@ -107,6 +107,17 @@ describe('loadConfig', () => {
     expect(cfg.outputDir).toBe('out');
   });
 
+  test('rejects an empty force-new tag', () => {
+    expect(() => loadConfig(baseEnv({ WRITE_DOCS_NEW_TAG: '' }))).toThrow(/WRITE_DOCS_NEW_TAG/);
+    expect(() => loadConfig(baseEnv({ WRITE_DOCS_NEW_TAG: '  ' }))).toThrow(/WRITE_DOCS_NEW_TAG/);
+  });
+
+  test('rejects a force-new tag equal to the write-docs tag', () => {
+    expect(() => loadConfig(baseEnv({ WRITE_DOCS_NEW_TAG: 'Write-Docs' }))).toThrow(
+      /WRITE_DOCS_NEW_TAG must differ from WRITE_DOCS_TAG/,
+    );
+  });
+
   test('honours an override for the force-new tag', () => {
     const cfg = loadConfig(baseEnv({ WRITE_DOCS_NEW_TAG: 'doc-it-new' }));
     expect(cfg.writeDocsNewTag).toBe('doc-it-new');

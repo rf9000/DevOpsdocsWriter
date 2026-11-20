@@ -170,10 +170,13 @@ export async function removeTagFromWorkItem(
 ): Promise<void> {
   const workItem = await getWorkItem(config, workItemId);
   const currentTags = String(workItem.fields['System.Tags'] ?? '');
-  const tags = currentTags
+  const present = currentTags
     .split(';')
     .map((t) => t.trim())
-    .filter((t) => t.length > 0 && t.toLowerCase() !== tagToRemove.toLowerCase());
+    .filter((t) => t.length > 0);
+  const tags = present.filter((t) => t.toLowerCase() !== tagToRemove.toLowerCase());
+  // Idempotent, like addTagToWorkItem: nothing to remove → no write.
+  if (tags.length === present.length) return;
   const newTags = tags.join('; ');
   // Must use "replace" — "add" on System.Tags merges instead of overwriting
   const path = `wit/workitems/${workItemId}?api-version=7.0`;
