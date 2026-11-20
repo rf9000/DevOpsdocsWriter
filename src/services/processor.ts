@@ -17,6 +17,8 @@ import * as sdk from '../sdk/azure-devops-client.ts';
 import * as gen from './generator.ts';
 import * as linker from './skill-linker.ts';
 import * as classifier from './classifier.ts';
+import { applyForceNew, detectForceNew, forcedNote } from './force-new.ts';
+import type { ForceNewSource } from './force-new.ts';
 import * as snapshots from './pr-snapshot.ts';
 import type { ClassifierContext, DocsClassification, ResolvedHome } from './classifier.ts';
 import { discoverSkills } from './skill-loader.ts';
@@ -381,6 +383,8 @@ export interface GatheredItem {
   product: ProductInfo;
   docsHomes: ResolvedHome[];
   targetRepoPath: string;
+  /** Set when the work item asks for a new article whatever the classifier decides. */
+  forceNew?: ForceNewSource;
 }
 
 /**
@@ -423,6 +427,17 @@ export async function gatherItemContext(
     .filter((c) => c.length > 0);
   if (comments.length > 0) log(`  #${itemId}: ${comments.length} comment(s)`);
 
+  const forceNew = detectForceNew(
+    comments,
+    String(workItem.fields['System.Tags'] ?? ''),
+    config.writeDocsNewTag,
+  );
+  if (forceNew) {
+    log(
+      `  #${itemId}: New article forced by ${forceNew === 'tag' ? `the "${config.writeDocsNewTag}" tag` : 'a work-item comment'}`,
+    );
+  }
+
   const prRefs = deps.parsePullRequestRefs(workItem);
   const pullRequests: PrContext[] = [];
   for (const ref of prRefs) {
@@ -439,7 +454,18 @@ export async function gatherItemContext(
   }
   if (pullRequests.length > 0) log(`  #${itemId}: ${pullRequests.length} linked PR(s)`);
 
-  return { workItem, itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath };
+  return {
+    workItem,
+    itemTitle,
+    itemType,
+    itemDescription,
+    comments,
+    pullRequests,
+    product,
+    docsHomes,
+    targetRepoPath,
+    ...(forceNew ? { forceNew } : {}),
+  };
 }
 
 /**
@@ -467,8 +493,8 @@ async function classifyGatheredItem(
 ): Promise<{ classification: DocsClassification } | { productIssue: string }> {
   const gathered = await gatherItemContext(config, itemId, deps);
   if ('productIssue' in gathered) return gathered;
-  const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath } = gathered;
-  const classification = await deps.classifyDocs(
+  const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath, forceNew } = gathered;
+  const decided = await deps.classifyDocs(
     { ...config, targetRepoPath },
     {
       itemId,
@@ -481,7 +507,7 @@ async function classifyGatheredItem(
       productName: product.name,
     },
   );
-  return { classification };
+  return { classification: applyForceNew(decided, forceNew) };
 }
 
 /** What one run spent, and the title and product the ledger line carries. */
@@ -534,7 +560,7 @@ async function runDocsItem(
         productIssue: gathered.productIssue,
       };
     }
-    const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath } = gathered;
+    const { itemTitle, itemType, itemDescription, comments, pullRequests, product, docsHomes, targetRepoPath, forceNew } = gathered;
     run.title = itemTitle;
     run.product = product.name;
     const effectiveConfig: AppConfig = { ...config, targetRepoPath };
@@ -543,7 +569,7 @@ async function runDocsItem(
     // any drafting tokens are spent. A classifier failure fails the item
     // (tag kept → retried later); we never draft on a guessed kind.
     log(`  #${itemId}: Classifying (new article vs update vs changelog)...`);
-    const classification = await deps.classifyDocs(effectiveConfig, {
+    const decided = await deps.classifyDocs(effectiveConfig, {
       itemId,
       itemTitle,
       itemType,
@@ -553,6 +579,16 @@ async function runDocsItem(
       homes: docsHomes,
       productName: product.name,
     }, onCost);
+    // A human override on top of the classifier: its decision becomes a new
+    // article, and what it had decided is kept for the log and the comment.
+    const classification = applyForceNew(decided, forceNew);
+    if (classification.forced) {
+      log(
+        `  #${itemId}: Classifier decided ${classification.forced.from}` +
+          `${classification.forced.target ? ` → ${classification.forced.target}` : ''}; ` +
+          `overridden to newfeature (forced by ${classification.forced.by})`,
+      );
+    }
     const home = chosenHome(docsHomes, classification);
     const mismatchedHome = targetFileHomeMismatch(classification, docsHomes);
     if (mismatchedHome) {
@@ -677,6 +713,7 @@ async function runDocsItem(
     // short note there instead; otherwise extract the agent's comment block.
     const commentBody =
       (recoveredFromMessage ? recoveryComment(classification.kind) : extractCommentBody(summary)) +
+      forcedNote(classification, config.writeDocsNewTag) +
       candidateNote(classification) +
       targetHomeNote(classification, home, mismatchedHome);
 

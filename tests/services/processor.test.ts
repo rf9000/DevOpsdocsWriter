@@ -6,6 +6,7 @@ import type { AppConfig, PrContext } from '../../src/types/index.ts';
 import {
   processDocsItem,
   classifyItem,
+  gatherItemContext,
   extractCommentBody,
   extractArticleBody,
   recoverDeliverableFromMessage,
@@ -1146,6 +1147,128 @@ describe('classifyItem', () => {
 
     expect('productIssue' in result).toBe(true);
     expect(deps.classifyDocs).toHaveBeenCalledTimes(0);
+  });
+});
+
+describe('forcing a new article', () => {
+  beforeEach(() => {
+    outDir = mkdtempSync(join(tmpdir(), 'force-out-'));
+    docsDir = mkdtempSync(join(tmpdir(), 'force-docs-'));
+    mkdirSync(join(docsDir, 'en-us', 'continia-banking'), { recursive: true });
+  });
+  afterEach(() => {
+    rmSync(outDir, { recursive: true, force: true });
+    rmSync(docsDir, { recursive: true, force: true });
+  });
+
+  const updateDecision = () =>
+    mock(() =>
+      Promise.resolve({
+        kind: 'update' as const,
+        docsFolder: 'continia-banking',
+        idPrefix: 'CB',
+        target: 'CB-161',
+        targetFile: 'payments/export.md',
+        candidates: [],
+        reasoning: 'r',
+      }),
+    );
+  const markerComment = () =>
+    mock(() => Promise.resolve([{ id: 1, text: '<div>Own article please #new-article</div>' }]));
+  const forceTagged = () =>
+    mock(() =>
+      Promise.resolve(
+        mockWorkItem({ fields: { ...mockWorkItem().fields, 'System.Tags': 'write-docs; Write-Docs-New' } }),
+      ),
+    );
+
+  test('gatherItemContext reports forceNew from a comment marker', async () => {
+    const gathered = await gatherItemContext(cfg(), 42, makeDeps({ getWorkItemComments: markerComment() }));
+    expect('forceNew' in gathered && gathered.forceNew).toBe('comment');
+  });
+
+  test('gatherItemContext reports forceNew from the force tag', async () => {
+    const gathered = await gatherItemContext(cfg(), 42, makeDeps({ getWorkItem: forceTagged() }));
+    expect('forceNew' in gathered && gathered.forceNew).toBe('tag');
+  });
+
+  test('gatherItemContext: no marker and no tag leaves forceNew unset', async () => {
+    const gathered = await gatherItemContext(
+      cfg(),
+      42,
+      makeDeps({ getWorkItemComments: mock(() => Promise.resolve([{ id: 1, text: 'A new article would be nice' }])) }),
+    );
+    expect('productIssue' in gathered).toBe(false);
+    expect((gathered as { forceNew?: string }).forceNew).toBeUndefined();
+  });
+
+  test('classifyItem returns the forced decision', async () => {
+    const deps = makeDeps({ classifyDocs: updateDecision(), getWorkItemComments: markerComment() });
+
+    const result = await classifyItem(cfg(), 42, deps);
+
+    if (!('classification' in result)) throw new Error('expected a classification');
+    expect(result.classification.kind).toBe('newfeature');
+    expect(result.classification.forced).toEqual({ by: 'comment', from: 'update', target: 'CB-161' });
+    expect(result.classification.candidates[0]?.id).toBe('CB-161');
+  });
+
+  test('processDocsItem drafts a forced item as a new article and says so on the work item', async () => {
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const uploadAttachment = mock(() => Promise.resolve({ id: 'a1', url: 'https://example.com/a1' }));
+    const generateDocs = mock((_cfg: AppConfig, ctx: DocsContext) => {
+      writeFileSync(ctx.outputPath, '# Article\n');
+      return Promise.resolve('Documents the feature.');
+    });
+    const deps = makeDeps({
+      classifyDocs: updateDecision(),
+      getWorkItem: forceTagged(),
+      addWorkItemComment,
+      uploadAttachment,
+      generateDocs,
+    });
+
+    const result = await processDocsItem(cfg(), 42, deps);
+
+    expect(result.documented).toBe(true);
+    const ctx = (generateDocs.mock.calls[0] as unknown[])[1] as DocsContext;
+    expect(ctx.classification.kind).toBe('newfeature');
+    expect(ctx.classification.target).toBeUndefined();
+    expect((uploadAttachment.mock.calls[0] as unknown[])[1]).toBe(
+      deliverableFileName(42, { kind: 'newfeature' }),
+    );
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('New article forced');
+    expect(comment).toContain('write-docs-new');
+    expect(comment).toContain('CB-161');
+    expect(comment).not.toContain('#new-article');
+  });
+
+  test('a comment-forced run never echoes the marker back to the work item', async () => {
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({
+      classifyDocs: updateDecision(),
+      getWorkItemComments: markerComment(),
+      addWorkItemComment,
+    });
+
+    await processDocsItem(cfg(), 42, deps);
+
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).toContain('New article forced');
+    expect(comment).toContain('a work-item comment');
+    expect(comment).not.toContain('#new-article');
+  });
+
+  test('force requested but the classifier already chose a new article: no note', async () => {
+    const addWorkItemComment = mock(() => Promise.resolve({}));
+    const deps = makeDeps({ getWorkItemComments: markerComment(), addWorkItemComment });
+
+    const result = await processDocsItem(cfg(), 42, deps);
+
+    expect(result.documented).toBe(true);
+    const comment = (addWorkItemComment.mock.calls[0] as unknown[])[2] as string;
+    expect(comment).not.toContain('New article forced');
   });
 });
 
